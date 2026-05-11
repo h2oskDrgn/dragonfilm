@@ -56,7 +56,7 @@ const TYPES = [
 
 // ---- Card renderer ----
 function allowedServersForCurrentMode() {
-  return state.mode === 'search' ? HOME_SEARCH_SERVERS : HOME_RECOMMEND_SERVERS;
+  return ['search', 'genre'].includes(state.mode) ? HOME_SEARCH_SERVERS : HOME_RECOMMEND_SERVERS;
 }
 
 function getServerSlugs(m, allowedServers = allowedServersForCurrentMode()) {
@@ -151,7 +151,7 @@ function updateSectionTitle() {
 }
 
 function resultInfoText(count) {
-  if (state.mode === 'search') return `${count} phim từ SV 1, SV 2 và SV 3 · kèm điểm OMDb nếu có`;
+  if (['search', 'genre'].includes(state.mode)) return `${count} phim từ SV 1, SV 2 và SV 3 · kèm điểm OMDb nếu có`;
   if (state.mode === 'latest') return `${count} phim từ SV 1 và SV 3 · xếp theo IMDb từ OMDb`;
   return `${count} phim từ SV 1 và SV 3 · ưu tiên điểm OMDb cao`;
 }
@@ -176,7 +176,7 @@ async function loadMovies(resetPage = true) {
     if (state.mode === 'search' && state.query) {
       result = await API.searchAll(state.query, state.page, HOME_SEARCH_SERVERS);
     } else if (state.mode === 'genre' && state.genre) {
-      result = await API.getByGenreFromServers(state.genre, state.page, HOME_RECOMMEND_SERVERS);
+      result = await API.getByGenreFromServers(state.genre, state.page, HOME_SEARCH_SERVERS);
     } else if (state.mode === 'country' && state.country) {
       result = await API.getByCountryFromServers(state.country, state.page, HOME_RECOMMEND_SERVERS);
     } else if (state.mode === 'type' && state.type) {

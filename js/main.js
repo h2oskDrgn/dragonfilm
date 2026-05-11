@@ -14,6 +14,9 @@ const state = {
   loading: false,
 };
 
+const HOME_RECOMMEND_SERVERS = ['kkphim', 'nguonc'];
+const HOME_SEARCH_SERVERS = Object.keys(API.servers);
+
 const GENRES = [
   { name: 'Hành Động', slug: 'hanh-dong' }, { name: 'Tình Cảm', slug: 'tinh-cam' },
   { name: 'Hài Hước', slug: 'hai-huoc' }, { name: 'Cổ Trang', slug: 'co-trang' },
@@ -41,9 +44,10 @@ function renderCard(m) {
   const poster = m.poster_url || m.thumb_url || '';
   const ep = m.episode_current || '';
   const typeLabel = m.type === 'series' ? 'Bộ' : m.type === 'single' ? 'Lẻ' : '';
-  const serverSlugs = m._serverSlugs || { [m._server || API.currentServer]: m.slug };
-  const sources = m._sources?.length ? m._sources : Object.keys(serverSlugs);
-  const preferredServer = serverSlugs[API.currentServer] ? API.currentServer : (m._server || sources[0] || API.currentServer);
+  const allowedServers = state.mode === 'search' ? HOME_SEARCH_SERVERS : HOME_RECOMMEND_SERVERS;
+  const serverSlugs = m._serverSlugs || { [m._server || allowedServers[0]]: m.slug };
+  const sources = (m._sources?.length ? m._sources : Object.keys(serverSlugs)).filter(server => allowedServers.includes(server));
+  const preferredServer = allowedServers.find(server => serverSlugs[server]) || m._server || sources[0] || allowedServers[0];
   const hrefParams = new URLSearchParams({
     slug: serverSlugs[preferredServer] || m.slug,
     server: preferredServer,
@@ -109,15 +113,15 @@ async function loadMovies(resetPage = true) {
   let result;
   try {
     if (state.mode === 'search' && state.query) {
-      result = await API.searchAll(state.query, state.page);
+      result = await API.searchAll(state.query, state.page, HOME_SEARCH_SERVERS);
     } else if (state.mode === 'genre' && state.genre) {
-      result = await API.getByGenre(state.genre, state.page);
+      result = await API.getByGenreFromServers(state.genre, state.page, HOME_RECOMMEND_SERVERS);
     } else if (state.mode === 'country' && state.country) {
-      result = await API.getByCountry(state.country, state.page);
+      result = await API.getByCountryFromServers(state.country, state.page, HOME_RECOMMEND_SERVERS);
     } else if (state.mode === 'type' && state.type) {
-      result = await API.getByType(state.type, state.page);
+      result = await API.getByTypeFromServers(state.type, state.page, HOME_RECOMMEND_SERVERS);
     } else {
-      result = await API.getLatest(state.page);
+      result = await API.getLatestFromServers(state.page, HOME_RECOMMEND_SERVERS);
     }
   } catch (e) {
     result = null;
@@ -135,8 +139,8 @@ async function loadMovies(resetPage = true) {
   const info = document.getElementById('result-info');
   if (info) {
     info.textContent = state.mode === 'search'
-      ? `${result.items.length} phim từ tất cả server`
-      : `${result.items.length} phim từ ${API.servers[API.currentServer]?.name || 'server'}`;
+      ? `${result.items.length} phim từ SV 1, SV 2 và SV 3`
+      : `${result.items.length} phim từ SV 1 và SV 3`;
   }
   renderPagination();
 }
@@ -168,20 +172,6 @@ function goPage(p) {
   window.scrollTo({ top: document.getElementById('movie-grid')?.offsetTop - 80 || 0, behavior: 'smooth' });
 }
 window.goPage = goPage;
-
-// ---- Server switcher ----
-function initServerSwitcher() {
-  $$('.server-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      $$('.server-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      API.currentServer = btn.dataset.server;
-      loadMovies();
-      showToast(`Đã chuyển sang ${API.servers[btn.dataset.server].name}`);
-    });
-    if (btn.dataset.server === API.currentServer) btn.classList.add('active');
-  });
-}
 
 // ---- Filter chips ----
 function initFilters() {
@@ -312,7 +302,6 @@ function initHero() {
 
 // ---- Main init ----
 document.addEventListener('DOMContentLoaded', () => {
-  initServerSwitcher();
   initFilters();
   initSearch();
   initHero();

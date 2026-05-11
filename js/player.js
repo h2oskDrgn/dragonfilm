@@ -9,11 +9,17 @@ const PlayerState = {
   episodes: [],
   currentServer: 0,
   currentEp: 0,
+  requestedEpisodeServer: 0,
+  requestedEpisode: 0,
+  currentEpisode: null,
   videoEl: null,
   iframeEl: null,
   isIframe: false,
   serverSlugs: {},
   serverAvailability: {},
+  watchTimer: null,
+  watchBaseSeconds: 0,
+  watchStartedAt: 0,
   holdTimer: null,
   controlsTimer: null,
 };
@@ -37,6 +43,8 @@ const Icons = {
 document.addEventListener('DOMContentLoaded', async () => {
   PlayerState.slug   = qp('slug')   || '';
   PlayerState.server = qp('server') || API.currentServer;
+  PlayerState.requestedEpisodeServer = parseInt(qp('epServer') || '0', 10) || 0;
+  PlayerState.requestedEpisode = parseInt(qp('ep') || '0', 10) || 0;
   PlayerState.serverSlugs = parseServerSources(qp('sources'));
   if (PlayerState.server && PlayerState.slug) {
     PlayerState.serverSlugs[PlayerState.server] = PlayerState.slug;
@@ -250,17 +258,8 @@ function activateApiServer(server, shouldResume = false) {
   renderMovieInfo(status.movie);
   renderEpisodes(status.movie.episodes);
 
-  if (Auth.getUser()) {
-    History.add({
-      slug: status.movie.slug,
-      name: status.movie.name,
-      poster_url: status.movie.poster_url || status.movie.thumb_url,
-      year: status.movie.year,
-      _server: server,
-    });
-  }
-
-  const firstPlayable = findFirstPlayableEpisode(status.movie.episodes);
+  const requested = getRequestedPlayableEpisode(status.movie.episodes);
+  const firstPlayable = requested || findFirstPlayableEpisode(status.movie.episodes);
   if (firstPlayable) playEpisode(firstPlayable.serverIdx, firstPlayable.epIdx, shouldResume);
   updateMovieUrl();
 }
@@ -291,8 +290,89 @@ function playEpisode(serverIdx, epIdx, shouldResume = false) {
     return;
   }
 
+  stopWatchTracking();
+  PlayerState.currentEpisode = {
+    serverName: srv.server_name || `Server ${serverIdx + 1}`,
+    name: ep.name || `Tập ${epIdx + 1}`,
+    slug: ep.slug || String(epIdx + 1),
+    serverIdx,
+    epIdx,
+  };
+  startWatchTracking(shouldResume);
   buildPlayer(link, true, shouldResume);
 }
+
+function getRequestedPlayableEpisode(episodes) {
+  const serverIdx = PlayerState.requestedEpisodeServer;
+  const epIdx = PlayerState.requestedEpisode;
+  const ep = episodes?.[serverIdx]?.items?.[epIdx];
+  if (ep?.link_embed) return { serverIdx, epIdx };
+  return null;
+}
+
+function episodeResumeKey() {
+  const ep = PlayerState.currentEpisode;
+  const epSlug = ep?.slug || `${PlayerState.currentServer}-${PlayerState.currentEp}`;
+  return `${PlayerState.server}_${PlayerState.slug}_${epSlug}`;
+}
+
+function currentWatchSeconds() {
+  if (!PlayerState.watchStartedAt) return PlayerState.watchBaseSeconds || 0;
+  const elapsed = document.hidden ? 0 : Math.floor((Date.now() - PlayerState.watchStartedAt) / 1000);
+  return Math.max(0, Math.floor((PlayerState.watchBaseSeconds || 0) + elapsed));
+}
+
+function startWatchTracking(shouldResume) {
+  const resumeKey = episodeResumeKey();
+  PlayerState.watchBaseSeconds = shouldResume ? ResumeTime.get(resumeKey) : 0;
+  PlayerState.watchStartedAt = Date.now();
+  saveHistoryProgress();
+  PlayerState.watchTimer = setInterval(saveHistoryProgress, 5000);
+}
+
+function stopWatchTracking() {
+  if (PlayerState.watchTimer) clearInterval(PlayerState.watchTimer);
+  PlayerState.watchTimer = null;
+  if (PlayerState.currentEpisode) saveHistoryProgress();
+}
+
+function saveHistoryProgress() {
+  if (!PlayerState.movie || !PlayerState.currentEpisode) return;
+  const seconds = currentWatchSeconds();
+  const resumeKey = episodeResumeKey();
+  if (seconds > 5) {
+    ResumeTime.set(resumeKey, seconds);
+    ResumeTime.set(PlayerState.slug, seconds);
+  }
+  if (!Auth.getUser()) return;
+  History.add({
+    slug: PlayerState.slug,
+    name: PlayerState.movie.name,
+    poster_url: PlayerState.movie.poster_url || PlayerState.movie.thumb_url,
+    year: PlayerState.movie.year,
+    _server: PlayerState.server,
+    source_name: API.servers[PlayerState.server]?.name || PlayerState.server,
+    episode_name: PlayerState.currentEpisode.name,
+    episode_slug: PlayerState.currentEpisode.slug,
+    episode_server_name: PlayerState.currentEpisode.serverName,
+    episode_server_idx: PlayerState.currentEpisode.serverIdx,
+    episode_index0: PlayerState.currentEpisode.epIdx,
+    episode_number: PlayerState.currentEpisode.epIdx + 1,
+    watched_seconds: seconds,
+    resume_key: resumeKey,
+  });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    PlayerState.watchBaseSeconds = currentWatchSeconds();
+    PlayerState.watchStartedAt = 0;
+    saveHistoryProgress();
+  } else if (PlayerState.currentEpisode) {
+    PlayerState.watchStartedAt = Date.now();
+  }
+});
+window.addEventListener('beforeunload', saveHistoryProgress);
 
 /* ============================================================
    BUILD PLAYER

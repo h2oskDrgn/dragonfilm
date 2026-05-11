@@ -151,9 +151,14 @@ const API = {
 
   // ---- Public API ----
   async getLatest(page = 1) {
-    const s = this._current;
-    const cfg = this._cfg();
-    const data = await this._fetch(cfg.endpoints.latest(page));
+    return this.getLatestOnServer(this._current, page);
+  },
+
+  async getLatestOnServer(server, page = 1) {
+    const s = server || this._current;
+    const cfg = this._cfgFor(s);
+    if (!cfg) return { items: [], totalPages: 1 };
+    const data = await this._fetchFrom(s, cfg.endpoints.latest(page), { quiet: true });
     if (!data) return { items: [], totalPages: 1 };
 
     let items = [], totalPages = 1;
@@ -194,12 +199,43 @@ const API = {
     return { items: items.filter(Boolean), totalPages };
   },
 
-  async searchAll(query, page = 1) {
-    const serverIds = Object.keys(this.servers);
+  async searchAll(query, page = 1, serverIds = Object.keys(this.servers)) {
     const results = await Promise.all(
       serverIds.map(server => this.searchOnServer(server, query, page).catch(() => ({ items: [], totalPages: 1 })))
     );
 
+    return this._mergeServerResults(results, serverIds);
+  },
+
+  async getLatestFromServers(page = 1, serverIds = Object.keys(this.servers)) {
+    const results = await Promise.all(
+      serverIds.map(server => this.getLatestOnServer(server, page).catch(() => ({ items: [], totalPages: 1 })))
+    );
+    return this._mergeServerResults(results, serverIds);
+  },
+
+  async getByGenreFromServers(slug, page = 1, serverIds = Object.keys(this.servers)) {
+    const results = await Promise.all(
+      serverIds.map(server => this._getListOnServer(server, 'genre', slug, page).catch(() => ({ items: [], totalPages: 1 })))
+    );
+    return this._mergeServerResults(results, serverIds);
+  },
+
+  async getByCountryFromServers(slug, page = 1, serverIds = Object.keys(this.servers)) {
+    const results = await Promise.all(
+      serverIds.map(server => this._getListOnServer(server, 'country', slug, page).catch(() => ({ items: [], totalPages: 1 })))
+    );
+    return this._mergeServerResults(results, serverIds);
+  },
+
+  async getByTypeFromServers(type, page = 1, serverIds = Object.keys(this.servers)) {
+    const results = await Promise.all(
+      serverIds.map(server => this._getListOnServer(server, 'category', type, page).catch(() => ({ items: [], totalPages: 1 })))
+    );
+    return this._mergeServerResults(results, serverIds);
+  },
+
+  _mergeServerResults(results, serverIds) {
     const grouped = new Map();
     results.forEach((result, index) => {
       const server = serverIds[index];
@@ -307,10 +343,15 @@ const API = {
   async getByType(type, page = 1) { return this._getList('category', type, page); },
 
   async _getList(type, slug, page) {
-    const s = this._current;
-    const cfg = this._cfg();
+    return this._getListOnServer(this._current, type, slug, page);
+  },
+
+  async _getListOnServer(server, type, slug, page) {
+    const s = server || this._current;
+    const cfg = this._cfgFor(s);
+    if (!cfg) return { items: [], totalPages: 1 };
     const endpoint = cfg.endpoints[type](slug, page);
-    const data = await this._fetch(endpoint);
+    const data = await this._fetchFrom(s, endpoint, { quiet: true });
     if (!data) return { items: [], totalPages: 1 };
 
     let items = [], totalPages = 1;

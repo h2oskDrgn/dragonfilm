@@ -47,8 +47,12 @@ const History = {
   save(list) { localStorage.setItem(this._key, JSON.stringify(list)); },
   add(movie) {
     if (!movie || !movie.slug) return;
-    let list = this.get().filter(m => m.slug !== movie.slug);
-    list.unshift({ ...movie, watchedAt: Date.now() });
+    const server = movie._server || 'kkphim';
+    const key = `${server}:${movie.slug}:${movie.episode_slug || movie.episode_index0 || 0}`;
+    const current = this.get();
+    const previous = current.find(m => `${m._server || 'kkphim'}:${m.slug}:${m.episode_slug || m.episode_index0 || 0}` === key) || {};
+    let list = current.filter(m => `${m._server || 'kkphim'}:${m.slug}:${m.episode_slug || m.episode_index0 || 0}` !== key);
+    list.unshift({ ...previous, ...movie, _server: server, watchedAt: Date.now() });
     if (list.length > 50) list = list.slice(0, 50);
     this.save(list);
   },

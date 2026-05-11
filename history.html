@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lịch Sử Xem - Xem Với Long</title>
-  <link rel="icon" href="assets/logo.png?v=4" type="image/png">
-  <link rel="stylesheet" href="css/style.css?v=4">
+  <link rel="icon" href="assets/logo.png?v=7" type="image/png">
+  <link rel="stylesheet" href="css/style.css?v=7">
 </head>
 <body>
 
@@ -16,7 +16,7 @@
     </svg>
   </button>
   <a href="index.html" class="logo-wrap">
-    <img src="assets/logo.png?v=4" alt="Xem Với Long Logo">
+    <img src="assets/logo.png?v=7" alt="Xem Với Long Logo">
   </a>
   <nav>
     <a href="index.html">Trang Chủ</a>
@@ -66,8 +66,14 @@
         <div>
           <h1 class="page-header-title">Lịch Sử Xem</h1>
           <p class="page-header-sub" id="history-count">Đang tải...</p>
+          <p class="history-note">Hãy đăng nhập hoặc đăng ký để lưu lịch sử xem. Khi đổi thiết bị, hãy xuất file lịch sử ra rồi nhập lại trên thiết bị mới.</p>
         </div>
-        <button class="clear-btn" id="btn-clear">Xóa Tất Cả</button>
+        <div class="history-actions">
+          <button class="history-action-btn" id="btn-export-history" type="button">Xuất lịch sử</button>
+          <button class="history-action-btn" id="btn-import-history" type="button">Nhập lịch sử</button>
+          <button class="clear-btn" id="btn-clear" type="button">Xóa Tất Cả</button>
+          <input id="history-import-file" type="file" accept="application/json,.json" hidden>
+        </div>
       </div>
     </div>
 
@@ -127,11 +133,12 @@
 
 <div id="toast-container"></div>
 
-<script src="js/api.js?v=4"></script>
-<script src="js/auth.js?v=4"></script>
+<script src="js/api.js?v=6"></script>
+<script src="js/auth.js?v=6"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   renderHistory();
+  bindHistoryImportExport();
 
   document.getElementById('btn-clear')?.addEventListener('click', () => {
     if (confirm('Xóa toàn bộ lịch sử xem?')) {
@@ -142,6 +149,107 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+function bindHistoryImportExport() {
+  const importInput = document.getElementById('history-import-file');
+
+  document.getElementById('btn-export-history')?.addEventListener('click', exportHistory);
+  document.getElementById('btn-import-history')?.addEventListener('click', () => importInput?.click());
+  importInput?.addEventListener('change', importHistoryFile);
+}
+
+function exportHistory() {
+  const payload = {
+    app: 'xem-voi-long',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    history: History.get(),
+    resumeTimes: getResumeTimes(),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `xem-voi-long-history-${date}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('Đã xuất lịch sử xem');
+}
+
+function importHistoryFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(reader.result);
+      const importedHistory = Array.isArray(payload) ? payload : payload.history;
+      if (!Array.isArray(importedHistory)) throw new Error('invalid history');
+
+      mergeHistory(importedHistory);
+      restoreResumeTimes(payload.resumeTimes || {});
+      renderHistory();
+      showToast('Đã nhập lịch sử xem');
+    } catch (error) {
+      showToast('File lịch sử không hợp lệ', 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function getResumeTimes() {
+  const times = {};
+  Object.keys(localStorage)
+    .filter(key => key.startsWith('xvl_time_'))
+    .forEach(key => {
+      times[key.replace('xvl_time_', '')] = parseFloat(localStorage.getItem(key)) || 0;
+    });
+  return times;
+}
+
+function restoreResumeTimes(times) {
+  Object.entries(times || {}).forEach(([slug, time]) => {
+    const value = parseFloat(time);
+    if (slug && value > 5) ResumeTime.set(slug, value);
+  });
+}
+
+function mergeHistory(importedHistory) {
+  const byKey = new Map();
+  [...History.get(), ...importedHistory].forEach(item => {
+    if (!item || !item.slug) return;
+    const key = `${item._server || 'kkphim'}:${item.slug}`;
+    const existing = byKey.get(key);
+    if (!existing || Number(item.watchedAt || 0) > Number(existing.watchedAt || 0)) {
+      byKey.set(key, {
+        slug: item.slug,
+        name: item.name || item.slug,
+        poster_url: item.poster_url || '',
+        year: item.year || '',
+        _server: item._server || 'kkphim',
+        source_name: item.source_name || '',
+        episode_name: item.episode_name || '',
+        episode_slug: item.episode_slug || '',
+        episode_server_name: item.episode_server_name || '',
+        episode_server_idx: Number(item.episode_server_idx || 0),
+        episode_index0: Number(item.episode_index0 || 0),
+        episode_number: Number(item.episode_number || 0),
+        watched_seconds: Number(item.watched_seconds || 0),
+        resume_key: item.resume_key || '',
+        watchedAt: Number(item.watchedAt || Date.now()),
+      });
+    }
+  });
+  const merged = [...byKey.values()]
+    .sort((a, b) => Number(b.watchedAt || 0) - Number(a.watchedAt || 0))
+    .slice(0, 50);
+  History.save(merged);
+}
 
 function renderHistory() {
   const list    = History.get();
@@ -164,23 +272,35 @@ function renderHistory() {
   }
 
   el.innerHTML = list.map(m => {
-    const time   = ResumeTime.get(m.slug);
+    const time   = Number(m.watched_seconds || 0) || (m.resume_key ? ResumeTime.get(m.resume_key) : 0) || ResumeTime.get(m.slug);
     const date   = new Date(m.watchedAt);
     const dateStr = date.toLocaleDateString('vi-VN', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    const episodeLabel = m.episode_name || (m.episode_number ? `Tập ${m.episode_number}` : '');
+    const serverLabel = m.source_name || (m._server === 'ophim' ? 'Server 2' : m._server === 'nguonc' ? 'Server 3' : 'Server 1');
+    const epParams = new URLSearchParams({
+      slug: m.slug,
+      server: m._server || 'kkphim',
+    });
+    if (m.episode_server_idx !== undefined) epParams.set('epServer', Number(m.episode_server_idx || 0));
+    if (m.episode_index0 !== undefined) epParams.set('ep', Number(m.episode_index0 || 0));
     const imgEl  = m.poster_url
       ? `<img class="history-poster" src="${esc(m.poster_url)}" alt="${esc(m.name)}" onerror="this.style.display='none'">`
       : `<div class="history-poster" style="background:var(--bg3);display:flex;align-items:center;justify-content:center;opacity:0.4">
            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M10 8l6 4-6 4V8z"/></svg>
          </div>`;
 
-    return `<a class="history-item" href="movie.html?slug=${encodeURIComponent(m.slug)}&server=${m._server || 'kkphim'}">
+    return `<a class="history-item" href="movie.html?${epParams.toString()}">
       ${imgEl}
       <div class="history-info">
         <div class="history-title">${esc(m.name)}</div>
-        <div class="history-meta">${m.year ? m.year + ' · ' : ''}${dateStr}</div>
+        <div class="history-meta">${m.year ? m.year + ' · ' : ''}${esc(serverLabel)} · ${dateStr}</div>
+        <div class="history-detail-row">
+          ${episodeLabel ? `<span>${esc(episodeLabel)}</span>` : '<span>Chưa rõ tập</span>'}
+          <span>${time > 5 ? `Đang xem tới ${fmtTime(time)}` : 'Chưa có mốc phút'}</span>
+        </div>
         ${time > 5 ? `
         <div class="history-progress">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Xem đến ${fmtTime(time)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${esc(episodeLabel || 'Chưa rõ tập')} · phút ${fmtTime(time)}</div>
           <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:30%"></div></div>
         </div>` : ''}
       </div>

@@ -49,6 +49,13 @@ const API = {
     }
   },
 
+  omdb: {
+    apiKey: '44d2be9c',
+    base: 'https://www.omdbapi.com/',
+    cachePrefix: 'dragonfilm_omdb_',
+    cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
+  },
+
   _current: 'kkphim',
 
   get currentServer() { return this._current; },
@@ -147,6 +154,165 @@ const API = {
     if (!url) return '';
     if (url.startsWith('http')) return url;
     return cfg.imgBase ? `${cfg.imgBase}/${url}` : url;
+  },
+
+  // ---- OMDb / IMDb ranking ----
+  async _fetchOmdb(params) {
+    const url = new URL(this.omdb.base);
+    url.searchParams.set('apikey', this.omdb.apiKey);
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value) url.searchParams.set(key, value);
+    });
+
+    try {
+      const res = await fetch(url.toString());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data?.Response === 'False' ? null : data;
+    } catch (err) {
+      console.warn('[OMDb] fetch error:', err);
+      return null;
+    }
+  },
+
+  _omdbCacheGet(key) {
+    try {
+      const raw = localStorage.getItem(`${this.omdb.cachePrefix}${key}`);
+      if (!raw) return undefined;
+      const cached = JSON.parse(raw);
+      if (!cached || Date.now() - cached.ts > this.omdb.cacheTtlMs) return undefined;
+      return cached.data;
+    } catch {
+      return undefined;
+    }
+  },
+
+  _omdbCacheSet(key, data) {
+    try {
+      localStorage.setItem(`${this.omdb.cachePrefix}${key}`, JSON.stringify({ ts: Date.now(), data }));
+    } catch {
+      // Ignore storage quota/private mode.
+    }
+  },
+
+  _omdbTitleCandidates(movie) {
+    const clean = (value) => String(value || '')
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/\b(vietsub|thuyet minh|long tieng|full|hd|fhd|4k)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const candidates = [
+      clean(movie?.origin_name),
+      clean(movie?.name),
+      clean(String(movie?.slug || '').replace(/-/g, ' ')),
+    ].filter(Boolean);
+
+    return [...new Set(candidates)];
+  },
+
+  _normalizeOmdb(raw) {
+    if (!raw) return null;
+    const ratingValue = raw.imdbRating && raw.imdbRating !== 'N/A'
+      ? Number.parseFloat(raw.imdbRating)
+      : null;
+    const voteValue = raw.imdbVotes && raw.imdbVotes !== 'N/A'
+      ? Number.parseInt(String(raw.imdbVotes).replace(/,/g, ''), 10)
+      : 0;
+    const metascore = raw.Metascore && raw.Metascore !== 'N/A'
+      ? Number.parseInt(raw.Metascore, 10)
+      : null;
+    const voteBoost = voteValue ? Math.min(0.35, Math.log10(voteValue + 1) / 20) : 0;
+    const metaBoost = metascore ? Math.min(0.15, metascore / 700) : 0;
+
+    return {
+      title: raw.Title || '',
+      year: raw.Year || '',
+      rated: raw.Rated || '',
+      released: raw.Released || '',
+      runtime: raw.Runtime || '',
+      genre: raw.Genre || '',
+      director: raw.Director || '',
+      actors: raw.Actors || '',
+      plot: raw.Plot || '',
+      language: raw.Language || '',
+      country: raw.Country || '',
+      awards: raw.Awards || '',
+      poster: raw.Poster && raw.Poster !== 'N/A' ? raw.Poster : '',
+      metascore,
+      imdbRating: raw.imdbRating || '',
+      imdbVotes: raw.imdbVotes || '',
+      imdbID: raw.imdbID || '',
+      type: raw.Type || '',
+      ratingValue,
+      voteValue,
+      rankScore: ratingValue ? ratingValue + voteBoost + metaBoost : 0,
+    };
+  },
+
+  async getOmdbInfo(movie) {
+    const cacheKey = this._movieKey(movie || {});
+    const cached = this._omdbCacheGet(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const year = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    const titles = this._omdbTitleCandidates(movie);
+
+    let found = null;
+    for (const title of titles) {
+      found = await this._fetchOmdb({ t: title, y: year, plot: 'short' });
+      if (!found && year) found = await this._fetchOmdb({ t: title, plot: 'short' });
+      if (found) break;
+
+      const search = await this._fetchOmdb({ s: title, y: year });
+      const first = search?.Search?.find(item => item?.imdbID) || search?.Search?.[0];
+      if (first?.imdbID) {
+        found = await this._fetchOmdb({ i: first.imdbID, plot: 'short' });
+        if (found) break;
+      }
+    }
+
+    const normalized = this._normalizeOmdb(found);
+    this._omdbCacheSet(cacheKey, normalized);
+    return normalized;
+  },
+
+  async enrichOneWithOmdb(movie) {
+    const omdb = await this.getOmdbInfo(movie);
+    return {
+      ...movie,
+      omdb,
+      poster_url: movie?.poster_url || omdb?.poster || '',
+      thumb_url: movie?.thumb_url || movie?.poster_url || omdb?.poster || '',
+    };
+  },
+
+  async enrichWithOmdb(items, options = {}) {
+    const limit = options.limit || 18;
+    const enriched = await Promise.all((items || []).map((movie, index) => {
+      if (index >= limit) return movie;
+      return this.enrichOneWithOmdb(movie).catch(() => movie);
+    }));
+
+    if (options.sort) {
+      enriched.sort((a, b) => {
+        const scoreA = a.omdb?.rankScore || 0;
+        const scoreB = b.omdb?.rankScore || 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'vi');
+      });
+    }
+
+    if (options.rank) {
+      let rank = 1;
+      enriched.forEach(movie => {
+        if (movie.omdb?.ratingValue) movie._rank = rank++;
+        else delete movie._rank;
+      });
+    }
+
+    return enriched;
   },
 
   // ---- Public API ----

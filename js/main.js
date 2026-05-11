@@ -40,12 +40,16 @@ const TYPES = [
 ];
 
 // ---- Card renderer ----
-function renderCard(m) {
-  const poster = m.poster_url || m.thumb_url || '';
-  const ep = m.episode_current || '';
-  const typeLabel = m.type === 'series' ? 'Bộ' : m.type === 'single' ? 'Lẻ' : '';
-  const allowedServers = state.mode === 'search' ? HOME_SEARCH_SERVERS : HOME_RECOMMEND_SERVERS;
-  const serverSlugs = m._serverSlugs || { [m._server || allowedServers[0]]: m.slug };
+function allowedServersForCurrentMode() {
+  return state.mode === 'search' ? HOME_SEARCH_SERVERS : HOME_RECOMMEND_SERVERS;
+}
+
+function getServerSlugs(m, allowedServers = allowedServersForCurrentMode()) {
+  return m._serverSlugs || { [m._server || allowedServers[0]]: m.slug };
+}
+
+function buildMovieHref(m, allowedServers = allowedServersForCurrentMode()) {
+  const serverSlugs = getServerSlugs(m, allowedServers);
   const sources = (m._sources?.length ? m._sources : Object.keys(serverSlugs)).filter(server => allowedServers.includes(server));
   const preferredServer = allowedServers.find(server => serverSlugs[server]) || m._server || sources[0] || allowedServers[0];
   const hrefParams = new URLSearchParams({
@@ -54,15 +58,37 @@ function renderCard(m) {
   });
   const sourceParam = encodeSourceMap(serverSlugs);
   if (sourceParam) hrefParams.set('sources', sourceParam);
+  return `movie.html?${hrefParams.toString()}`;
+}
+
+function renderSourceBadges(m, allowedServers = allowedServersForCurrentMode()) {
+  const serverSlugs = getServerSlugs(m, allowedServers);
+  const sources = (m._sources?.length ? m._sources : Object.keys(serverSlugs)).filter(server => allowedServers.includes(server));
   const sourceBadges = sources
     .filter(server => API.servers[server])
     .map(server => `<span class="source-chip">${escHtml(API.servers[server].name.replace('Server ', 'SV '))}</span>`)
     .join('');
+  return sourceBadges;
+}
+
+function formatOmdbBadge(m) {
+  return m.omdb?.ratingValue ? `<span class="rating-chip">IMDb ${escHtml(m.omdb.imdbRating)}</span>` : '';
+}
+
+function renderCard(m) {
+  const poster = m.poster_url || m.thumb_url || '';
+  const ep = m.episode_current || '';
+  const typeLabel = m.type === 'series' ? 'Bộ' : m.type === 'single' ? 'Lẻ' : '';
+  const href = buildMovieHref(m);
+  const sourceBadges = renderSourceBadges(m);
+  const rankBadge = m._rank ? `<span class="rank-chip">#${m._rank}</span>` : '';
+  const ratingBadge = formatOmdbBadge(m);
+  const omdbGenre = m.omdb?.genre ? m.omdb.genre.split(',')[0].trim() : '';
   const imgEl = poster
     ? `<img src="${escHtml(poster)}" alt="${escHtml(m.name)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=movie-poster-placeholder><div>🎬</div><span>${escHtml(m.name)}</span></div>'">`
     : `<div class="movie-poster-placeholder"><div>🎬</div><span>${escHtml(m.name)}</span></div>`;
 
-  return `<a class="movie-card" href="movie.html?${hrefParams.toString()}">
+  return `<a class="movie-card" href="${href}">
     <div class="movie-poster">
       ${imgEl}
       <div class="movie-overlay"><div class="play-btn-overlay">▶</div></div>
@@ -72,9 +98,11 @@ function renderCard(m) {
     </div>
     <div class="movie-info">
       <div class="movie-title">${escHtml(m.name)}</div>
+      ${rankBadge || ratingBadge ? `<div class="movie-rank-row">${rankBadge}${ratingBadge}</div>` : ''}
       <div class="movie-sub">
         ${m.year ? `<span>${m.year}</span>` : ''}
         ${m.lang ? `<span class="dot">·</span><span>${escHtml(m.lang)}</span>` : ''}
+        ${omdbGenre ? `<span class="dot">·</span><span>${escHtml(omdbGenre)}</span>` : ''}
       </div>
       ${sourceBadges ? `<div class="movie-sources">${sourceBadges}</div>` : ''}
     </div>
@@ -97,6 +125,22 @@ function renderSkeletons(n = 12) {
   ).join('');
 }
 
+function updateSectionTitle() {
+  const title = document.getElementById('section-title');
+  if (!title) return;
+  if (state.mode === 'search') title.textContent = 'Kết Quả Tìm Kiếm';
+  else if (state.mode === 'genre') title.textContent = 'Phim Theo Thể Loại';
+  else if (state.mode === 'country') title.textContent = 'Phim Theo Quốc Gia';
+  else if (state.mode === 'type') title.textContent = 'Phim Theo Danh Mục';
+  else title.textContent = 'Đề Xuất Theo Xếp Hạng';
+}
+
+function resultInfoText(count) {
+  if (state.mode === 'search') return `${count} phim từ SV 1, SV 2 và SV 3 · kèm điểm OMDb nếu có`;
+  if (state.mode === 'latest') return `${count} phim từ SV 1 và SV 3 · xếp theo IMDb từ OMDb`;
+  return `${count} phim từ SV 1 và SV 3 · ưu tiên điểm OMDb cao`;
+}
+
 // ---- Load movies ----
 async function loadMovies(resetPage = true) {
   if (state.loading) return;
@@ -108,6 +152,7 @@ async function loadMovies(resetPage = true) {
   const pgWrap = document.getElementById('pagination');
   if (!grid) return;
 
+  updateSectionTitle();
   grid.innerHTML = renderSkeletons();
   if (pgWrap) pgWrap.innerHTML = '';
 
@@ -128,6 +173,18 @@ async function loadMovies(resetPage = true) {
     result = null;
   }
 
+  if (result?.items?.length) {
+    try {
+      result.items = await API.enrichWithOmdb(result.items, {
+        limit: state.mode === 'search' ? 12 : 24,
+        sort: state.mode !== 'search',
+        rank: state.mode !== 'search',
+      });
+    } catch (e) {
+      console.warn('[OMDb] Không thể xếp hạng danh sách:', e);
+    }
+  }
+
   state.loading = false;
 
   if (!result || !result.items.length) {
@@ -136,13 +193,10 @@ async function loadMovies(resetPage = true) {
   }
 
   state.totalPages = Math.min(result.totalPages || 1, 100);
+  if (state.mode === 'latest') updateHeroFromMovies(result.items);
   grid.innerHTML = result.items.map(renderCard).join('');
   const info = document.getElementById('result-info');
-  if (info) {
-    info.textContent = state.mode === 'search'
-      ? `${result.items.length} phim từ SV 1, SV 2 và SV 3`
-      : `${result.items.length} phim từ SV 1 và SV 3`;
-  }
+  if (info) info.textContent = resultInfoText(result.items.length);
   renderPagination();
 }
 
@@ -280,6 +334,58 @@ const HERO_FALLBACK = [
   { name: 'One Piece Film: Red', year: 2022, quality: '4K', type: 'Anime', desc: 'Shanks Tóc Đỏ và con gái Uta tái ngộ trong một buổi hòa nhạc bí ẩn thu hút cả thế giới.', slug: 'one-piece-film-red', bg: 'https://picsum.photos/seed/onepiece/1600/600', badge: 'Anime', lang: 'Vietsub' },
   { name: 'Squid Game', year: 2021, quality: 'FHD', type: 'Phim Bộ', desc: 'Những người nợ nần tham gia một cuộc trò chơi sinh tử với phần thưởng 45,6 tỷ won.', slug: 'squid-game', bg: 'https://picsum.photos/seed/squid/1600/600', badge: 'Hot', lang: 'Vietsub' },
 ];
+
+function localCategoryLabel(m) {
+  const first = m.category?.[0];
+  if (typeof first === 'string') return first;
+  return first?.name || m.type || 'Phim';
+}
+
+function heroTitleHtml(name) {
+  const words = String(name || 'Dragon Film').trim().split(/\s+/);
+  if (words.length <= 2) return escHtml(words.join(' '));
+  const splitAt = Math.ceil(words.length / 2);
+  return `${escHtml(words.slice(0, splitAt).join(' '))}<br>${escHtml(words.slice(splitAt).join(' '))}`;
+}
+
+function updateHeroFromMovies(items) {
+  const slides = document.querySelectorAll('.hero-slide');
+  if (!slides.length) return;
+
+  const picks = (items || []).filter(movie => movie?.name).slice(0, slides.length);
+  picks.forEach((m, index) => {
+    const slide = slides[index];
+    const bg = m.omdb?.poster || m.poster_url || m.thumb_url;
+    const ratingText = m.omdb?.ratingValue ? `IMDb ${m.omdb.imdbRating}` : 'OMDb';
+    const genreText = m.omdb?.genre ? m.omdb.genre.split(',')[0].trim() : localCategoryLabel(m);
+    const desc = m.omdb?.plot && m.omdb.plot !== 'N/A'
+      ? m.omdb.plot
+      : `Đề xuất từ Dragon Film, có trên ${renderSourceBadges(m, HOME_RECOMMEND_SERVERS).replace(/<[^>]+>/g, ' ').trim() || 'SV 1 và SV 3'}.`;
+
+    const img = slide.querySelector('.hero-bg');
+    if (img && bg) {
+      img.src = bg;
+      img.alt = m.name || '';
+    }
+    const badge = slide.querySelector('.hero-badge');
+    if (badge) badge.textContent = index === 0 ? 'Đề Xuất OMDb' : `Hạng #${m._rank || index + 1}`;
+    const title = slide.querySelector('.hero-title');
+    if (title) title.innerHTML = heroTitleHtml(m.name);
+    const year = slide.querySelector('.year');
+    if (year) year.textContent = m.year || m.omdb?.year || '';
+    const cat = slide.querySelector('.cat');
+    if (cat) cat.textContent = genreText || 'Phim';
+    const rating = slide.querySelector('.hero-rating');
+    if (rating) rating.textContent = ratingText;
+    const heroDesc = slide.querySelector('.hero-desc');
+    if (heroDesc) heroDesc.textContent = desc;
+    const actions = slide.querySelector('.hero-actions');
+    if (actions) {
+      actions.innerHTML = `<a href="${escHtml(buildMovieHref(m, HOME_RECOMMEND_SERVERS))}" class="btn-primary">Xem Ngay</a>
+        <a href="#movies" class="btn-secondary">Bảng Xếp Hạng</a>`;
+    }
+  });
+}
 
 function initHero() {
   const slides = document.querySelectorAll('.hero-slide');

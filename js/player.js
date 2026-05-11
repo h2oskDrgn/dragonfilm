@@ -102,7 +102,8 @@ function renderMovieInfo(m) {
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   set('movie-title', m.name || '');
-  set('movie-sub', [m.year, m.quality, m.lang, m.origin_name].filter(Boolean).join(' · '));
+  const omdbRating = m.omdb?.ratingValue ? `IMDb ${m.omdb.imdbRating}` : '';
+  set('movie-sub', [m.year, m.quality, m.lang, omdbRating, m.origin_name].filter(Boolean).join(' · '));
   set('movie-desc', m.description || '');
 
   const posterEl = document.getElementById('movie-poster');
@@ -113,9 +114,22 @@ function renderMovieInfo(m) {
 
   const tagsEl = document.getElementById('movie-tags');
   if (tagsEl) {
-    const cats = [...(m.category || []), ...(m.country || [])];
+    const omdbGenres = String(m.omdb?.genre || '')
+      .split(',')
+      .map(g => g.trim())
+      .filter(Boolean)
+      .map(name => ({ name }));
+    const cats = [...omdbGenres, ...(m.category || []), ...(m.country || [])];
+    const seen = new Set();
     tagsEl.innerHTML = cats
-      .map(c => `<span class="movie-tag">${escHtml(typeof c === 'object' ? c.name : c)}</span>`)
+      .map(c => typeof c === 'object' ? c.name : c)
+      .filter(name => {
+        const key = String(name || '').toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map(name => `<span class="movie-tag">${escHtml(name)}</span>`)
       .join('');
   }
 }
@@ -257,6 +271,12 @@ function activateApiServer(server, shouldResume = false) {
   renderApiServerButtons();
   renderMovieInfo(status.movie);
   renderEpisodes(status.movie.episodes);
+  API.enrichOneWithOmdb(status.movie).then(enriched => {
+    if (PlayerState.server !== server || PlayerState.slug !== status.slug) return;
+    status.movie = enriched;
+    PlayerState.movie = enriched;
+    renderMovieInfo(enriched);
+  }).catch(() => {});
 
   const requested = getRequestedPlayableEpisode(status.movie.episodes);
   const firstPlayable = requested || findFirstPlayableEpisode(status.movie.episodes);

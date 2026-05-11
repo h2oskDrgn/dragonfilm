@@ -2,10 +2,10 @@
    XEM VỚI LONG — player.css  (YouTube-style)
    ============================================================ */
 
-.player-page { background: #000; }
+.player-page { background: var(--bg); }
 
 .player-section {
-  background: #000;
+  background: var(--bg);
   padding-top: var(--header-h);
 }
 
@@ -283,12 +283,12 @@
 /* ---- Spinner (loading state) ---- */
 .spinner-wrap {
   display: flex; align-items: center; justify-content: center;
-  aspect-ratio: 16/9; background: #000;
+  aspect-ratio: 16/9; background: #050506;
   flex-direction: column; gap: 16px;
 }
 .spinner {
   width: 44px; height: 44px; border-radius: 50%;
-  border: 3px solid rgba(57,255,20,0.15);
+  border: 3px solid rgba(216,189,122,0.14);
   border-top-color: var(--green);
   animation: spin 0.75s linear infinite;
 }

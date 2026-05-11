@@ -6,7 +6,7 @@
   <title>Xem Với Long - Phim Hay Share Ngay</title>
   <meta name="description" content="Xem phim online miễn phí, chất lượng cao - Xem Với Long">
   <link rel="icon" href="assets/logo.png?v=10" type="image/png">
-  <link rel="stylesheet" href="css/style.css?v=11">
+  <link rel="stylesheet" href="css/style.css?v=12">
 </head>
 <body>
 
@@ -134,9 +134,25 @@
   <div class="container" id="movies">
 
     <!-- Filter by genre -->
-    <div class="filter-bar" style="margin-top:32px">
+    <div class="filter-bar genre-filter-bar" style="margin-top:32px">
       <span class="filter-label">Thể Loại:</span>
+      <button class="chip chip-more" id="btn-all-genres" type="button" aria-expanded="false" aria-controls="all-genres-panel">
+        Tất cả thể loại
+        <span class="chip-caret">▾</span>
+      </button>
       <div class="filter-chips" id="genre-chips"></div>
+    </div>
+
+    <div class="all-genres-panel" id="all-genres-panel" hidden>
+      <div class="all-genres-head">
+        <div>
+          <div class="all-genres-title">Tất cả thể loại API</div>
+          <div class="all-genres-status" id="all-genres-status">Bấm để chọn thể loại muốn lọc</div>
+          <div class="all-genres-current" id="all-genres-current"></div>
+        </div>
+        <button class="all-genres-close" id="btn-close-genres" type="button">Đóng</button>
+      </div>
+      <div class="all-genres-grid" id="all-genre-chips"></div>
     </div>
 
     <!-- Filter by country -->
@@ -248,9 +264,9 @@
 
 <div id="toast-container"></div>
 
-<script src="js/api.js?v=11"></script>
+<script src="js/api.js?v=12"></script>
 <script src="js/auth.js?v=9"></script>
-<script src="js/main.js?v=12"></script>
+<script src="js/main.js?v=13"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);

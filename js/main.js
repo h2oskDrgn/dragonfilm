@@ -26,6 +26,21 @@ const GENRES = [
   { name: 'Gia Đình', slug: 'gia-dinh' }, { name: 'Khoa Học', slug: 'khoa-hoc' },
 ];
 
+const FALLBACK_ALL_GENRES = [
+  ...GENRES,
+  { name: 'Âm Nhạc', slug: 'am-nhac' },
+  { name: 'Bí Ẩn', slug: 'bi-an' },
+  { name: 'Chính Kịch', slug: 'chinh-kich' },
+  { name: 'Chiến Tranh', slug: 'chien-tranh' },
+  { name: 'Hình Sự', slug: 'hinh-su' },
+  { name: 'Học Đường', slug: 'hoc-duong' },
+  { name: 'Kinh Điển', slug: 'kinh-dien' },
+  { name: 'Tài Liệu', slug: 'tai-lieu' },
+  { name: 'Thần Thoại', slug: 'than-thoai' },
+  { name: 'Thể Thao', slug: 'the-thao' },
+  { name: 'Phim 18+', slug: 'phim-18' },
+];
+
 const COUNTRIES = [
   { name: 'Việt Nam', slug: 'viet-nam' }, { name: 'Hàn Quốc', slug: 'han-quoc' },
   { name: 'Trung Quốc', slug: 'trung-quoc' }, { name: 'Nhật Bản', slug: 'nhat-ban' },
@@ -230,27 +245,115 @@ function goPage(p) {
 window.goPage = goPage;
 
 // ---- Filter chips ----
+function setActiveGenreSlug(slug) {
+  $$('#genre-chips .chip, #all-genre-chips .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.slug === slug);
+  });
+}
+
+function clearOtherFilters(except = '') {
+  if (except !== 'genre') $$('#genre-chips .chip, #all-genre-chips .chip').forEach(c => c.classList.remove('active'));
+  if (except !== 'country') $$('#country-chips .chip').forEach(c => c.classList.remove('active'));
+  if (except !== 'type') $$('#type-chips .chip').forEach(c => c.classList.remove('active'));
+}
+
+function applyGenreFilter(slug, name = '') {
+  const sameGenre = state.mode === 'genre' && state.genre === slug;
+  if (sameGenre) {
+    state.mode = 'latest';
+    state.genre = '';
+    clearOtherFilters('');
+  } else {
+    state.mode = 'genre';
+    state.genre = slug;
+    clearOtherFilters('genre');
+    setActiveGenreSlug(slug);
+    const title = document.getElementById('all-genres-current');
+    if (title) title.textContent = name ? `Đang chọn: ${name}` : '';
+  }
+  loadMovies();
+}
+
+function renderGenreButtons(wrap, genres) {
+  if (!wrap) return;
+  wrap.innerHTML = (genres || []).map(g =>
+    `<button class="chip" data-slug="${escHtml(g.slug)}">${escHtml(g.name)}</button>`
+  ).join('');
+}
+
+function uniqueGenres(list) {
+  const map = new Map();
+  (list || []).forEach(g => {
+    if (!g?.slug || !g?.name) return;
+    if (!map.has(g.slug)) map.set(g.slug, g);
+  });
+  return [...map.values()];
+}
+
+async function loadAllGenres() {
+  const allWrap = document.getElementById('all-genre-chips');
+  const status = document.getElementById('all-genres-status');
+  if (!allWrap) return;
+
+  renderGenreButtons(allWrap, FALLBACK_ALL_GENRES);
+  if (status) status.textContent = 'Đang lấy thể loại từ API...';
+
+  try {
+    const fromApi = await API.getGenresFromServers?.(HOME_SEARCH_SERVERS);
+    const merged = uniqueGenres([...(fromApi || []), ...FALLBACK_ALL_GENRES]);
+    renderGenreButtons(allWrap, merged.length ? merged : FALLBACK_ALL_GENRES);
+    if (state.mode === 'genre' && state.genre) setActiveGenreSlug(state.genre);
+    if (status) status.textContent = `Có ${merged.length || FALLBACK_ALL_GENRES.length} thể loại`;
+  } catch (err) {
+    if (status) status.textContent = 'API lỗi, đang dùng danh sách dự phòng';
+  }
+}
+
+function initAllGenrePanel() {
+  const btn = document.getElementById('btn-all-genres');
+  const panel = document.getElementById('all-genres-panel');
+  const closeBtn = document.getElementById('btn-close-genres');
+  const allWrap = document.getElementById('all-genre-chips');
+  if (!btn || !panel || !allWrap) return;
+
+  let loaded = false;
+  const openPanel = async () => {
+    const willOpen = panel.hidden;
+    panel.hidden = !willOpen;
+    btn.classList.toggle('active', willOpen);
+    btn.setAttribute('aria-expanded', String(willOpen));
+    if (willOpen && !loaded) {
+      loaded = true;
+      await loadAllGenres();
+    }
+  };
+
+  btn.addEventListener('click', openPanel);
+  closeBtn?.addEventListener('click', () => {
+    panel.hidden = true;
+    btn.classList.remove('active');
+    btn.setAttribute('aria-expanded', 'false');
+  });
+
+  allWrap.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    applyGenreFilter(chip.dataset.slug, chip.textContent.trim());
+  });
+}
+
 function initFilters() {
   // Genres
   const genreWrap = document.getElementById('genre-chips');
   if (genreWrap) {
-    genreWrap.innerHTML = GENRES.map(g =>
-      `<button class="chip" data-slug="${g.slug}">${g.name}</button>`
-    ).join('');
+    renderGenreButtons(genreWrap, GENRES);
     genreWrap.addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
       if (!chip) return;
-      const active = chip.classList.toggle('active');
-      $$('#genre-chips .chip').forEach(c => c !== chip && c.classList.remove('active'));
-      if (active) {
-        state.mode = 'genre'; state.genre = chip.dataset.slug;
-        $$('#country-chips .chip, #type-chips .chip').forEach(c => c.classList.remove('active'));
-      } else {
-        state.mode = 'latest'; state.genre = '';
-      }
-      loadMovies();
+      applyGenreFilter(chip.dataset.slug, chip.textContent.trim());
     });
   }
+  initAllGenrePanel();
 
   // Countries
   const ctryWrap = document.getElementById('country-chips');
@@ -265,7 +368,7 @@ function initFilters() {
       $$('#country-chips .chip').forEach(c => c !== chip && c.classList.remove('active'));
       if (active) {
         state.mode = 'country'; state.country = chip.dataset.slug;
-        $$('#genre-chips .chip, #type-chips .chip').forEach(c => c.classList.remove('active'));
+        clearOtherFilters('country');
       } else {
         state.mode = 'latest'; state.country = '';
       }
@@ -286,7 +389,7 @@ function initFilters() {
       $$('#type-chips .chip').forEach(c => c !== chip && c.classList.remove('active'));
       if (active) {
         state.mode = 'type'; state.type = chip.dataset.slug;
-        $$('#genre-chips .chip, #country-chips .chip').forEach(c => c.classList.remove('active'));
+        clearOtherFilters('type');
       } else {
         state.mode = 'latest'; state.type = '';
       }

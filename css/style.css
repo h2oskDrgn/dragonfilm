@@ -314,6 +314,54 @@ main { padding-top: var(--header-h); min-height: 100vh; }
 }
 .chip:hover { border-color: var(--green); color: var(--green); }
 .chip.active { background: var(--green); color: var(--accent-ink); border-color: var(--green); box-shadow: 0 0 10px var(--green-glow); }
+.chip-more {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-color: var(--border-strong);
+  color: var(--green);
+  background: linear-gradient(135deg, rgba(216,189,122,0.14), rgba(255,255,255,0.03));
+}
+.chip-more.active .chip-caret { transform: rotate(180deg); }
+.chip-caret { display: inline-block; transition: var(--transition); }
+.all-genres-panel {
+  margin: -14px 0 28px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(25,29,34,0.98), rgba(16,18,21,0.98));
+  box-shadow: 0 18px 45px rgba(0,0,0,0.32), 0 0 24px var(--green-glow-sm);
+}
+.all-genres-panel[hidden] { display: none !important; }
+.all-genres-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px;
+}
+.all-genres-title {
+  font-family: var(--font-title); font-size: 16px; font-weight: 800;
+  color: var(--white); letter-spacing: 0.2px;
+}
+.all-genres-status,
+.all-genres-current {
+  font-size: 12px; color: var(--text-muted); margin-top: 2px;
+}
+.all-genres-current { color: var(--green); }
+.all-genres-close {
+  background: var(--bg3); color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 12px; cursor: pointer;
+  font-family: var(--font-title); font-weight: 700; transition: var(--transition);
+}
+.all-genres-close:hover { border-color: var(--green); color: var(--green); }
+.all-genres-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+.all-genres-grid .chip {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
 
 .server-bar {
   display: flex; align-items: center; gap: 8px; margin-bottom: 20px;

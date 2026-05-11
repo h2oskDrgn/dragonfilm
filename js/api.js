@@ -13,6 +13,7 @@ const API = {
         latest:   (p) => `/danh-sach/phim-moi-cap-nhat?page=${p}`,
         search:   (q, p) => `/v1/api/tim-kiem?keyword=${encodeURIComponent(q)}&page=${p}`,
         detail:   (slug) => `/phim/${slug}`,
+        genres:   () => `/the-loai`,
         genre:    (slug, p) => `/v1/api/the-loai/${slug}?page=${p}`,
         country:  (slug, p) => `/v1/api/quoc-gia/${slug}?page=${p}`,
         category: (type, p) => `/v1/api/danh-sach/${type}?page=${p}`,
@@ -27,6 +28,7 @@ const API = {
         latest:   (p) => `/danh-sach/phim-moi-cap-nhat?page=${p}`,
         search:   (q, p) => `/v1/api/tim-kiem?keyword=${encodeURIComponent(q)}&page=${p}`,
         detail:   (slug) => `/phim/${slug}`,
+        genres:   () => `/the-loai`,
         genre:    (slug, p) => `/v1/api/the-loai/${slug}?page=${p}`,
         country:  (slug, p) => `/v1/api/quoc-gia/${slug}?page=${p}`,
         category: (type, p) => `/v1/api/danh-sach/${type}?page=${p}`,
@@ -41,6 +43,7 @@ const API = {
         latest:   (p) => `/api/films/phim-moi-cap-nhat?page=${p}`,
         search:   (q, p) => `/api/films/search?keyword=${encodeURIComponent(q)}&page=${p}`,
         detail:   (slug) => `/api/film/${slug}`,
+        genres:   () => `/api/films/the-loai`,
         genre:    (slug, p) => `/api/films/the-loai/${slug}?page=${p}`,
         country:  (slug, p) => `/api/films/quoc-gia/${slug}?page=${p}`,
         category: (type, p) => `/api/films/${type}?page=${p}`,
@@ -99,6 +102,64 @@ const API = {
       if (!options.quiet) console.warn('[API] fetch error:', err, url);
       return null;
     }
+  },
+
+
+  _normalizeTaxonomyItem(item) {
+    if (!item) return null;
+    const name = item.name || item.title || item.label || item.category_name || item.genre_name || '';
+    const slug = item.slug || item.key || item.id || item.category_slug || item.genre_slug || '';
+    if (!name || !slug) return null;
+    return { name: String(name).trim(), slug: String(slug).trim() };
+  },
+
+  _extractTaxonomyList(data) {
+    const candidates = [
+      data,
+      data?.items,
+      data?.data,
+      data?.data?.items,
+      data?.categories,
+      data?.category,
+      data?.genres,
+      data?.the_loai,
+      data?.theloai,
+    ];
+    const arr = candidates.find(Array.isArray) || [];
+    return arr.map(item => this._normalizeTaxonomyItem(item)).filter(Boolean);
+  },
+
+  async getGenresFromServer(server, options = {}) {
+    const s = server || this._current;
+    const cfg = this._cfgFor(s);
+    if (!cfg) return [];
+
+    const paths = [
+      cfg.endpoints?.genres?.(),
+      '/the-loai',
+      '/v1/api/the-loai',
+      '/api/films/the-loai',
+      '/api/genres',
+    ].filter(Boolean);
+
+    for (const path of [...new Set(paths)]) {
+      const data = await this._fetchFrom(s, path, { quiet: true, ...options });
+      const list = this._extractTaxonomyList(data);
+      if (list.length) return list;
+    }
+    return [];
+  },
+
+  async getGenresFromServers(serverIds = Object.keys(this.servers)) {
+    const results = await Promise.all((serverIds || []).map(server =>
+      this.getGenresFromServer(server, { quiet: true }).catch(() => [])
+    ));
+    const map = new Map();
+    results.flat().forEach(item => {
+      if (!item?.slug || !item?.name) return;
+      if (!map.has(item.slug)) map.set(item.slug, item);
+    });
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
   },
 
   // ---- Normalize movie from any source ----

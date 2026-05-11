@@ -14,6 +14,7 @@ const PlayerState = {
   currentEpisode: null,
   videoEl: null,
   iframeEl: null,
+  hls: null,
   isIframe: false,
   serverSlugs: {},
   serverAvailability: {},
@@ -164,7 +165,7 @@ function renderEpisodes(episodes) {
       const btn = document.createElement('button');
       btn.className = 'ep-btn';
       btn.textContent = ep.name || `Tập ${ei + 1}`;
-      if (!ep.link_embed) {
+      if (!hasPlayableLink(ep)) {
         btn.disabled = true;
         btn.title = 'Tập này chưa có player API';
       }
@@ -183,10 +184,44 @@ function findFirstPlayableEpisode(episodes) {
   if (!Array.isArray(episodes)) return null;
   for (let serverIdx = 0; serverIdx < episodes.length; serverIdx += 1) {
     const items = episodes[serverIdx]?.items || [];
-    const epIdx = items.findIndex(ep => ep.link_embed);
+    const epIdx = items.findIndex(ep => hasPlayableLink(ep));
     if (epIdx >= 0) return { serverIdx, epIdx };
   }
   return null;
+}
+
+function isHlsUrl(url) {
+  const value = String(url || '').trim();
+  if (!value) return false;
+
+  try {
+    const parsed = new URL(value, document.baseURI || window.location.href);
+    return /\.m3u8$/i.test(parsed.pathname);
+  } catch {
+    return /\.m3u8$/i.test(value.split(/[?#]/)[0]);
+  }
+}
+
+function hasPlayableLink(ep) {
+  return Boolean(ep?.link_embed || ep?.link_m3u8);
+}
+
+function buildHlsIframeUrl(hlsUrl) {
+  return `https://player.phimapi.com/player/?url=${encodeURIComponent(hlsUrl)}`;
+}
+
+function getEpisodeSource(ep) {
+  const embed = ep?.link_embed && !isHlsUrl(ep.link_embed) ? ep.link_embed : '';
+  const hls = ep?.link_m3u8 || (isHlsUrl(ep?.link_embed) ? ep.link_embed : '');
+  const hlsIframe = hls ? buildHlsIframeUrl(hls) : '';
+
+  if ((PlayerState.server === 'kkphim' || PlayerState.server === 'nguonc') && hls) {
+    return { src: hls, isIframe: false, fallbackSrc: embed || hlsIframe };
+  }
+
+  if (embed) return { src: embed, isIframe: true, fallbackSrc: '' };
+  if (hlsIframe) return { src: hlsIframe, isIframe: true, fallbackSrc: '' };
+  return { src: '', isIframe: false, fallbackSrc: '' };
 }
 
 function parseServerSources(raw) {
@@ -303,9 +338,9 @@ function playEpisode(serverIdx, epIdx, shouldResume = false) {
     ResumeTime.set(PlayerState.slug, PlayerState.videoEl.currentTime);
   }
 
-  const ep   = srv.items[epIdx];
-  const link = ep.link_embed || '';
-  if (!link) {
+  const ep = srv.items[epIdx];
+  const source = getEpisodeSource(ep);
+  if (!source.src) {
     showError('Tập này chưa có player API. Hãy thử tập khác hoặc nguồn khác.');
     return;
   }
@@ -319,14 +354,14 @@ function playEpisode(serverIdx, epIdx, shouldResume = false) {
     epIdx,
   };
   startWatchTracking(shouldResume);
-  buildPlayer(link, true, shouldResume);
+  buildPlayer(source.src, source.isIframe, shouldResume, source.fallbackSrc);
 }
 
 function getRequestedPlayableEpisode(episodes) {
   const serverIdx = PlayerState.requestedEpisodeServer;
   const epIdx = PlayerState.requestedEpisode;
   const ep = episodes?.[serverIdx]?.items?.[epIdx];
-  if (ep?.link_embed) return { serverIdx, epIdx };
+  if (hasPlayableLink(ep)) return { serverIdx, epIdx };
   return null;
 }
 
@@ -397,17 +432,22 @@ window.addEventListener('beforeunload', saveHistoryProgress);
 /* ============================================================
    BUILD PLAYER
    ============================================================ */
-function buildPlayer(src, isIframe, shouldResume = false) {
+function buildPlayer(src, isIframe, shouldResume = false, fallbackSrc = '') {
   PlayerState.isIframe = isIframe;
   const wrap = document.getElementById('player-wrap');
   if (!wrap) return;
+
+  if (PlayerState.hls) {
+    PlayerState.hls.destroy();
+    PlayerState.hls = null;
+  }
 
   if (isIframe) {
     wrap.innerHTML = `
       <div class="video-wrap" id="video-wrap">
         <iframe src="${escHtml(src)}" allowfullscreen
           allow="autoplay; fullscreen; picture-in-picture"
-          id="player-iframe" referrerpolicy="no-referrer"></iframe>
+          id="player-iframe"></iframe>
         <div class="iframe-notice">Đang dùng player của API</div>
       </div>`;
     PlayerState.iframeEl = document.getElementById('player-iframe');
@@ -465,7 +505,13 @@ function buildPlayer(src, isIframe, shouldResume = false) {
 
   const video = document.getElementById('player-video');
   PlayerState.videoEl = video;
-  video.src = src;
+  let didHandlePlaybackError = false;
+  const handlePlaybackError = () => {
+    if (didHandlePlaybackError) return;
+    didHandlePlaybackError = true;
+    if (fallbackSrc) buildPlayer(fallbackSrc, true, false);
+    else showError('Không phát được video. Hãy thử server khác.');
+  };
 
   video.addEventListener('loadedmetadata', () => {
     // Chỉ resume thời gian dở khi shouldResume = true (tức là lần đầu vào phim)
@@ -479,8 +525,39 @@ function buildPlayer(src, isIframe, shouldResume = false) {
     }
     video.play().catch(() => {});
   });
+  video.addEventListener('error', handlePlaybackError);
+
+  attachVideoSource(video, src, handlePlaybackError);
 
   initVideoControls(video);
+}
+
+function attachVideoSource(video, src, onFatalError) {
+  if (!isHlsUrl(src)) {
+    video.src = src;
+    return;
+  }
+
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = src;
+    return;
+  }
+
+  if (window.Hls && Hls.isSupported()) {
+    const hls = new Hls();
+    PlayerState.hls = hls;
+    hls.loadSource(src);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.ERROR, (event, data) => {
+      if (!data?.fatal) return;
+      hls.destroy();
+      PlayerState.hls = null;
+      onFatalError();
+    });
+    return;
+  }
+
+  onFatalError();
 }
 
 /* ============================================================

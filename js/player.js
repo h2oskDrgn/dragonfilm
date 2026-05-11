@@ -12,6 +12,8 @@ const PlayerState = {
   videoEl: null,
   iframeEl: null,
   isIframe: false,
+  serverSlugs: {},
+  serverAvailability: {},
   holdTimer: null,
   controlsTimer: null,
 };
@@ -35,6 +37,10 @@ const Icons = {
 document.addEventListener('DOMContentLoaded', async () => {
   PlayerState.slug   = qp('slug')   || '';
   PlayerState.server = qp('server') || API.currentServer;
+  PlayerState.serverSlugs = parseServerSources(qp('sources'));
+  if (PlayerState.server && PlayerState.slug) {
+    PlayerState.serverSlugs[PlayerState.server] = PlayerState.slug;
+  }
   API.currentServer  = PlayerState.server;
 
   if (!PlayerState.slug) {
@@ -50,27 +56,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadMovie() {
   showSpinner();
   try {
-    const data = await API.getDetail(PlayerState.slug);
-    if (!data) throw new Error('no data');
+    await loadServerAvailability();
+    const preferred = PlayerState.serverAvailability[PlayerState.server]?.playable
+      ? PlayerState.server
+      : Object.keys(PlayerState.serverAvailability).find(server => PlayerState.serverAvailability[server]?.playable);
 
-    PlayerState.movie = data;
-    renderMovieInfo(data);
-    renderEpisodes(data.episodes);
-
-    if (Auth.getUser()) {
-      History.add({
-        slug: data.slug,
-        name: data.name,
-        poster_url: data.poster_url || data.thumb_url,
-        year: data.year,
-        _server: PlayerState.server,
-      });
-    }
-
-    if (data.episodes.length && data.episodes[0].items.length) {
-      playEpisode(0, 0);
+    if (preferred) {
+      activateApiServer(preferred, true);
     } else {
-      showError('Phim này chưa có nguồn phát. Hãy thử server khác.');
+      renderApiServerButtons();
+      showError('Phim này chưa có player API. Hãy thử server khác.');
     }
   } catch (e) {
     showError('Lỗi tải phim. Vui lòng thử lại.');
@@ -147,7 +142,11 @@ function renderEpisodes(episodes) {
       const btn = document.createElement('button');
       btn.className = 'ep-btn';
       btn.textContent = ep.name || `Tập ${ei + 1}`;
-      btn.addEventListener('click', () => playEpisode(si, ei));
+      if (!ep.link_embed) {
+        btn.disabled = true;
+        btn.title = 'Tập này chưa có player API';
+      }
+      btn.addEventListener('click', () => playEpisode(si, ei, false));
       grid.appendChild(btn);
     });
   });
@@ -158,10 +157,122 @@ function setActiveEpBtn(si, ei) {
   document.getElementById(`ep-grid-${si}`)?.querySelectorAll('.ep-btn')[ei]?.classList.add('active');
 }
 
+function findFirstPlayableEpisode(episodes) {
+  if (!Array.isArray(episodes)) return null;
+  for (let serverIdx = 0; serverIdx < episodes.length; serverIdx += 1) {
+    const items = episodes[serverIdx]?.items || [];
+    const epIdx = items.findIndex(ep => ep.link_embed);
+    if (epIdx >= 0) return { serverIdx, epIdx };
+  }
+  return null;
+}
+
+function parseServerSources(raw) {
+  const map = {};
+  String(raw || '').split('|').forEach(part => {
+    const [server, ...slugParts] = part.split(':');
+    const slug = slugParts.join(':');
+    if (server && slug) map[server] = decodeURIComponent(slug);
+  });
+  return map;
+}
+
+function encodeServerSources(sourceMap) {
+  return Object.entries(sourceMap || {})
+    .filter(([, slug]) => slug)
+    .map(([server, slug]) => `${server}:${encodeURIComponent(slug)}`)
+    .join('|');
+}
+
+function hasPlayableEpisode(movie) {
+  return Boolean(findFirstPlayableEpisode(movie?.episodes || []));
+}
+
+async function loadServerAvailability() {
+  const serverIds = Object.keys(API.servers);
+  const results = await Promise.all(serverIds.map(async server => {
+    const slug = PlayerState.serverSlugs[server] || PlayerState.slug;
+    if (!slug) return [server, { available: false, playable: false, slug: '', movie: null }];
+    const movie = await API.getDetailFromServer(server, slug);
+    if (!movie) return [server, { available: false, playable: false, slug, movie: null }];
+    PlayerState.serverSlugs[server] = movie.slug || slug;
+    return [server, {
+      available: true,
+      playable: hasPlayableEpisode(movie),
+      slug: movie.slug || slug,
+      movie,
+    }];
+  }));
+
+  PlayerState.serverAvailability = Object.fromEntries(results);
+  renderApiServerButtons();
+}
+
+function renderApiServerButtons() {
+  document.querySelectorAll('.server-btn[data-server]').forEach(btn => {
+    const server = btn.dataset.server;
+    const cfg = API.servers[server];
+    const status = PlayerState.serverAvailability[server];
+    const hasMovie = Boolean(status?.playable);
+    btn.classList.toggle('active', server === PlayerState.server);
+    btn.classList.toggle('has-movie', hasMovie);
+    btn.classList.toggle('no-movie', !hasMovie);
+    btn.disabled = !hasMovie;
+    if (cfg) {
+      btn.textContent = `${cfg.name} · ${cfg.short} · ${hasMovie ? 'Có phim' : 'Không có'}`;
+    }
+  });
+}
+
+function updateMovieUrl() {
+  const params = new URLSearchParams({
+    slug: PlayerState.slug,
+    server: PlayerState.server,
+  });
+  const sources = encodeServerSources(PlayerState.serverSlugs);
+  if (sources) params.set('sources', sources);
+  window.history.replaceState({}, '', `movie.html?${params.toString()}`);
+}
+
+function activateApiServer(server, shouldResume = false) {
+  const status = PlayerState.serverAvailability[server];
+  if (!status?.playable || !status.movie) {
+    showToast('Server này chưa có phim phát được', 'error');
+    renderApiServerButtons();
+    return;
+  }
+
+  PlayerState.server = server;
+  PlayerState.slug = status.slug;
+  API.currentServer = server;
+  PlayerState.movie = status.movie;
+  renderApiServerButtons();
+  renderMovieInfo(status.movie);
+  renderEpisodes(status.movie.episodes);
+
+  if (Auth.getUser()) {
+    History.add({
+      slug: status.movie.slug,
+      name: status.movie.name,
+      poster_url: status.movie.poster_url || status.movie.thumb_url,
+      year: status.movie.year,
+      _server: server,
+    });
+  }
+
+  const firstPlayable = findFirstPlayableEpisode(status.movie.episodes);
+  if (firstPlayable) playEpisode(firstPlayable.serverIdx, firstPlayable.epIdx, shouldResume);
+  updateMovieUrl();
+}
+
+window.switchApiServer = function switchApiServer(serverId) {
+  activateApiServer(serverId, false);
+};
+
 /* ============================================================
    PLAY EPISODE
    ============================================================ */
-function playEpisode(serverIdx, epIdx) {
+function playEpisode(serverIdx, epIdx, shouldResume = false) {
   const srv = PlayerState.episodes[serverIdx];
   if (!srv?.items[epIdx]) return;
 
@@ -174,16 +285,19 @@ function playEpisode(serverIdx, epIdx) {
   }
 
   const ep   = srv.items[epIdx];
-  const link = ep.link_m3u8 || ep.link_embed || '';
-  if (!link) { showError('Không có nguồn phát cho tập này.'); return; }
+  const link = ep.link_embed || '';
+  if (!link) {
+    showError('Tập này chưa có player API. Hãy thử tập khác hoặc nguồn khác.');
+    return;
+  }
 
-  buildPlayer(link, !link.includes('.m3u8'));
+  buildPlayer(link, true, shouldResume);
 }
 
 /* ============================================================
    BUILD PLAYER
    ============================================================ */
-function buildPlayer(src, isIframe) {
+function buildPlayer(src, isIframe, shouldResume = false) {
   PlayerState.isIframe = isIframe;
   const wrap = document.getElementById('player-wrap');
   if (!wrap) return;
@@ -194,7 +308,7 @@ function buildPlayer(src, isIframe) {
         <iframe src="${escHtml(src)}" allowfullscreen
           allow="autoplay; fullscreen; picture-in-picture"
           id="player-iframe" referrerpolicy="no-referrer"></iframe>
-        <div class="iframe-notice">Đang phát qua embed</div>
+        <div class="iframe-notice">Đang dùng player của API</div>
       </div>`;
     PlayerState.iframeEl = document.getElementById('player-iframe');
     PlayerState.videoEl  = null;
@@ -254,10 +368,14 @@ function buildPlayer(src, isIframe) {
   video.src = src;
 
   video.addEventListener('loadedmetadata', () => {
-    const t = ResumeTime.get(PlayerState.slug);
-    if (t > 5 && t < video.duration - 5) {
-      video.currentTime = t;
-      showToast(`Tiếp tục từ ${fmtTime(t)}`, 'info');
+    // Chỉ resume thời gian dở khi shouldResume = true (tức là lần đầu vào phim)
+    // Khi chuyển tập (shouldResume = false) thì luôn bắt đầu từ đầu
+    if (shouldResume) {
+      const t = ResumeTime.get(PlayerState.slug);
+      if (t > 5 && t < video.duration - 5) {
+        video.currentTime = t;
+        showToast(`Tiếp tục từ ${fmtTime(t)}`, 'info');
+      }
     }
     video.play().catch(() => {});
   });

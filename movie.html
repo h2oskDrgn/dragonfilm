@@ -98,14 +98,9 @@
           <div id="episode-servers"></div>
         </div>
 
-        <!-- Keyboard shortcuts -->
+        <!-- API player note -->
         <div class="shortcut-hint">
-          <strong>Phím tắt:</strong>
-          Space / K = Play/Pause &nbsp;·&nbsp;
-          ← → = Tua 10s &nbsp;·&nbsp;
-          M = Mute &nbsp;·&nbsp;
-          F = Fullscreen &nbsp;·&nbsp;
-          Giữ = Tua nhanh 2×
+          Đang phát bằng player do API cung cấp. Các thao tác phát, tua, tốc độ và toàn màn hình sẽ dùng điều khiển bên trong player đó.
         </div>
       </div>
     </div>
@@ -192,13 +187,10 @@
 <script src="js/auth.js"></script>
 <script src="js/player.js"></script>
 <script>
-function switchApiServer(serverId, btn) {
-  document.querySelectorAll('.server-btn[data-server]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  API.currentServer    = serverId;
-  PlayerState.server   = serverId;
-  loadMovie();
-}
+const activatePlayerServer = window.switchApiServer;
+window.switchApiServer = function(serverId) {
+  if (typeof activatePlayerServer === 'function') activatePlayerServer(serverId);
+};
 
 document.getElementById('movie-poster')?.addEventListener('load', function() {
   document.getElementById('poster-wrap').style.display = 'block';

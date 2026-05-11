@@ -45,7 +45,7 @@ const API = {
         country:  (slug, p) => `/api/films/quoc-gia/${slug}?page=${p}`,
         category: (type, p) => `/api/films/${type}?page=${p}`,
       },
-      imgBase: '',
+      imgBase: 'https://phim.nguonc.com',
     }
   },
 
@@ -65,9 +65,24 @@ const API = {
   },
 
   _cfg() { return this.servers[this._current]; },
+  _cfgFor(server) { return this.servers[server || this._current]; },
 
   async _fetch(path) {
     const cfg = this._cfg();
+    const url = `${cfg.base}${path}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      console.error('[API] fetch error:', err, url);
+      return null;
+    }
+  },
+
+  async _fetchFrom(server, path) {
+    const cfg = this._cfgFor(server);
+    if (!cfg) return null;
     const url = `${cfg.base}${path}`;
     try {
       const res = await fetch(url);
@@ -86,19 +101,26 @@ const API = {
 
     // NguonC format
     if (server === 'nguonc') {
+      const imgUrl = raw.poster_url || raw.thumb_url || '';
+      const fullImg = imgUrl.startsWith('http') ? imgUrl : (imgUrl ? `${cfg.imgBase}${imgUrl}` : '');
+      // Normalize categories/nations to [{name, slug}] format
+      const normArr = (arr) => {
+        if (!Array.isArray(arr)) return [];
+        return arr.map(i => typeof i === 'object' ? i : { name: i, slug: '' });
+      };
       return {
-        slug: raw.slug || raw.id,
+        slug: raw.slug || raw.id || '',
         name: raw.name || raw.title || '',
         origin_name: raw.original_name || raw.origin_name || '',
-        thumb_url: raw.poster_url || raw.thumb_url || '',
-        poster_url: raw.poster_url || raw.thumb_url || '',
+        thumb_url: fullImg,
+        poster_url: fullImg,
         year: raw.year || raw.release_year || '',
         type: raw.kind || raw.type || '',
-        episode_current: raw.current_episode || '',
+        episode_current: raw.current_episode || raw.episode_current || '',
         quality: raw.quality || 'HD',
-        lang: raw.language || raw.lang || '',
-        category: raw.categories || raw.genre || [],
-        country: raw.nations || raw.country || [],
+        lang: raw.language || raw.lang || 'Vietsub',
+        category: normArr(raw.categories || raw.category || raw.genre || []),
+        country: normArr(raw.nations || raw.country || []),
         _server: server || this._current,
       };
     }
@@ -138,7 +160,7 @@ const API = {
 
     if (s === 'nguonc') {
       items = (data.items || data.data || []).map(m => this._normalize(m, s));
-      totalPages = data.paginate?.last_page || data.total_pages || 1;
+      totalPages = data.paginate?.last_page || data.pagination?.last_page || data.total_pages || 1;
     } else {
       // KKP / OPhim
       const list = data.items || data.data?.items || [];
@@ -150,9 +172,14 @@ const API = {
   },
 
   async search(query, page = 1) {
-    const s = this._current;
-    const cfg = this._cfg();
-    const data = await this._fetch(cfg.endpoints.search(query, page));
+    return this.searchOnServer(this._current, query, page);
+  },
+
+  async searchOnServer(server, query, page = 1) {
+    const s = server || this._current;
+    const cfg = this._cfgFor(s);
+    if (!cfg) return { items: [], totalPages: 1 };
+    const data = await this._fetchFrom(s, cfg.endpoints.search(query, page));
     if (!data) return { items: [], totalPages: 1 };
 
     let items = [], totalPages = 1;
@@ -167,18 +194,66 @@ const API = {
     return { items: items.filter(Boolean), totalPages };
   },
 
+  async searchAll(query, page = 1) {
+    const serverIds = Object.keys(this.servers);
+    const results = await Promise.all(
+      serverIds.map(server => this.searchOnServer(server, query, page).catch(() => ({ items: [], totalPages: 1 })))
+    );
+
+    const grouped = new Map();
+    results.forEach((result, index) => {
+      const server = serverIds[index];
+      (result.items || []).forEach(movie => {
+        const key = this._movieKey(movie);
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            ...movie,
+            _server: server,
+            _sources: [],
+            _serverSlugs: {},
+          });
+        }
+        const target = grouped.get(key);
+        if (!target._sources.includes(server)) target._sources.push(server);
+        target._serverSlugs[server] = movie.slug;
+      });
+    });
+
+    const items = [...grouped.values()].map(movie => {
+      const preferred = movie._serverSlugs[this._current] ? this._current : movie._sources[0];
+      return {
+        ...movie,
+        _server: preferred,
+        slug: movie._serverSlugs[preferred] || movie.slug,
+      };
+    });
+
+    return {
+      items,
+      totalPages: Math.max(1, ...results.map(result => result.totalPages || 1)),
+      searchedServers: serverIds,
+    };
+  },
+
   async getDetail(slug) {
-    const s = this._current;
-    const cfg = this._cfg();
-    const data = await this._fetch(cfg.endpoints.detail(slug));
+    return this.getDetailFromServer(this._current, slug);
+  },
+
+  async getDetailFromServer(server, slug) {
+    const s = server || this._current;
+    const cfg = this._cfgFor(s);
+    if (!cfg) return null;
+    const data = await this._fetchFrom(s, cfg.endpoints.detail(slug));
     if (!data) return null;
 
     if (s === 'nguonc') {
-      const m = data.film || data;
+      // NguonC returns { film: {...}, episodes: [...] }
+      const m = data.film || data.movie || data;
+      const episodesRaw = data.episodes || m.episodes || [];
       return {
         ...this._normalize(m, s),
         description: m.description || m.content || '',
-        episodes: this._parseEpisodesNguonC(data.episodes || m.episodes || []),
+        episodes: this._parseEpisodesNguonC(episodesRaw),
       };
     }
 
@@ -191,6 +266,16 @@ const API = {
     };
   },
 
+  _movieKey(movie) {
+    const name = String(movie.origin_name || movie.name || movie.slug || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    return `${name}:${movie.year || ''}`;
+  },
+
   _parseEpisodes(raw, cfg) {
     if (!Array.isArray(raw)) return [];
     return raw.map(server => ({
@@ -198,8 +283,8 @@ const API = {
       items: (server.server_data || []).map(ep => ({
         name: ep.name,
         slug: ep.slug,
-        link_m3u8: ep.link_m3u8 || ep.link_embed || '',
-        link_embed: ep.link_embed || ep.link_m3u8 || '',
+        link_m3u8: ep.link_m3u8 || '',
+        link_embed: ep.link_embed || '',
       }))
     }));
   },
@@ -208,11 +293,11 @@ const API = {
     if (!Array.isArray(raw)) return [];
     return raw.map((server, i) => ({
       server_name: server.server_name || `Server ${i + 1}`,
-      items: (server.items || []).map(ep => ({
-        name: ep.name,
-        slug: ep.slug,
-        link_m3u8: ep.embed || ep.m3u8 || '',
-        link_embed: ep.embed || ep.m3u8 || '',
+      items: (server.items || server.server_data || []).map(ep => ({
+        name: ep.name || ep.title || `Tập ${i + 1}`,
+        slug: ep.slug || '',
+        link_m3u8:  ep.link_m3u8  || ep.m3u8   || '',
+        link_embed: ep.link_embed || ep.embed   || ep.link_m3u8 || ep.m3u8 || '',
       }))
     }));
   },

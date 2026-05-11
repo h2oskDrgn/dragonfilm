@@ -41,11 +41,24 @@ function renderCard(m) {
   const poster = m.poster_url || m.thumb_url || '';
   const ep = m.episode_current || '';
   const typeLabel = m.type === 'series' ? 'Bộ' : m.type === 'single' ? 'Lẻ' : '';
+  const serverSlugs = m._serverSlugs || { [m._server || API.currentServer]: m.slug };
+  const sources = m._sources?.length ? m._sources : Object.keys(serverSlugs);
+  const preferredServer = serverSlugs[API.currentServer] ? API.currentServer : (m._server || sources[0] || API.currentServer);
+  const hrefParams = new URLSearchParams({
+    slug: serverSlugs[preferredServer] || m.slug,
+    server: preferredServer,
+  });
+  const sourceParam = encodeSourceMap(serverSlugs);
+  if (sourceParam) hrefParams.set('sources', sourceParam);
+  const sourceBadges = sources
+    .filter(server => API.servers[server])
+    .map(server => `<span class="source-chip">${escHtml(API.servers[server].name.replace('Server ', 'SV '))}</span>`)
+    .join('');
   const imgEl = poster
     ? `<img src="${escHtml(poster)}" alt="${escHtml(m.name)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=movie-poster-placeholder><div>🎬</div><span>${escHtml(m.name)}</span></div>'">`
     : `<div class="movie-poster-placeholder"><div>🎬</div><span>${escHtml(m.name)}</span></div>`;
 
-  return `<a class="movie-card" href="movie.html?slug=${encodeURIComponent(m.slug)}&server=${m._server || API.currentServer}">
+  return `<a class="movie-card" href="movie.html?${hrefParams.toString()}">
     <div class="movie-poster">
       ${imgEl}
       <div class="movie-overlay"><div class="play-btn-overlay">▶</div></div>
@@ -59,12 +72,19 @@ function renderCard(m) {
         ${m.year ? `<span>${m.year}</span>` : ''}
         ${m.lang ? `<span class="dot">·</span><span>${escHtml(m.lang)}</span>` : ''}
       </div>
+      ${sourceBadges ? `<div class="movie-sources">${sourceBadges}</div>` : ''}
     </div>
   </a>`;
 }
 
 function escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function encodeSourceMap(sourceMap) {
+  const entries = Object.entries(sourceMap || {}).filter(([, slug]) => slug);
+  if (entries.length <= 1) return '';
+  return entries.map(([server, slug]) => `${server}:${encodeURIComponent(slug)}`).join('|');
 }
 
 function renderSkeletons(n = 12) {
@@ -89,7 +109,7 @@ async function loadMovies(resetPage = true) {
   let result;
   try {
     if (state.mode === 'search' && state.query) {
-      result = await API.search(state.query, state.page);
+      result = await API.searchAll(state.query, state.page);
     } else if (state.mode === 'genre' && state.genre) {
       result = await API.getByGenre(state.genre, state.page);
     } else if (state.mode === 'country' && state.country) {
@@ -112,6 +132,12 @@ async function loadMovies(resetPage = true) {
 
   state.totalPages = Math.min(result.totalPages || 1, 100);
   grid.innerHTML = result.items.map(renderCard).join('');
+  const info = document.getElementById('result-info');
+  if (info) {
+    info.textContent = state.mode === 'search'
+      ? `${result.items.length} phim từ tất cả server`
+      : `${result.items.length} phim từ ${API.servers[API.currentServer]?.name || 'server'}`;
+  }
   renderPagination();
 }
 

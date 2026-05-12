@@ -239,14 +239,45 @@ function rankingAltTitle(item, type) {
   return item.original_title && item.original_title !== item.title ? item.original_title : '';
 }
 
+function rankingTitleCandidates(item, type) {
+  const values = type === 'anime'
+    ? [item.title_english, item.title_romaji, item.title_native, ...(item.synonyms || [])]
+    : [item.title, item.original_title];
+  const seen = new Set();
+  return values
+    .map(value => String(value || '').trim())
+    .filter(value => {
+      const key = value.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function encodeRankCandidates(values) {
+  return values.map(value => encodeURIComponent(value)).join('|');
+}
+
+function decodeRankCandidates(value) {
+  return String(value || '')
+    .split('|')
+    .map(part => {
+      try { return decodeURIComponent(part); }
+      catch { return part; }
+    })
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
 function renderRankingRows(items, type, expanded = false) {
   if (!items?.length) {
     return '<div class="weekly-rank-empty">Chưa có dữ liệu.</div>';
   }
 
   return items.slice(0, expanded ? items.length : RANKING_COLLAPSED).map((item, index) => {
-    const title = rankingTitle(item, type);
-    const altTitle = rankingAltTitle(item, type);
+    const candidates = rankingTitleCandidates(item, type);
+    const title = candidates[0] || rankingTitle(item, type);
+    const altTitle = candidates.find(value => value !== title) || rankingAltTitle(item, type);
     const poster = type === 'anime'
       ? (item.cover_url || item.banner_url || '')
       : (item.poster_url || item.backdrop_url || '');
@@ -261,7 +292,7 @@ function renderRankingRows(items, type, expanded = false) {
       : '<span class="weekly-rank-poster-placeholder"></span>';
     const year = type === 'anime' ? (item.season_year || '') : (item.year || '');
 
-    return `<button class="weekly-rank-row" type="button" data-rank-title="${escHtml(title)}" data-rank-alt="${escHtml(altTitle)}" data-rank-year="${escHtml(year)}">
+    return `<button class="weekly-rank-row" type="button" data-rank-title="${escHtml(title)}" data-rank-alt="${escHtml(altTitle)}" data-rank-candidates="${escHtml(encodeRankCandidates(candidates))}" data-rank-year="${escHtml(year)}">
       <span class="weekly-rank-no">${index + 1}.</span>
       <span class="weekly-rank-poster">${img}</span>
       <span class="weekly-rank-copy">
@@ -346,7 +377,12 @@ async function loadWeeklyRankings() {
 async function openRankingMovie(btn) {
   const title = btn?.dataset?.rankTitle || '';
   if (!title || btn.disabled) return;
-  const titleCandidates = [...new Set([title, btn.dataset.rankAlt || ''].map(value => String(value).trim()).filter(Boolean))];
+  const titleCandidates = [
+    ...decodeRankCandidates(btn.dataset.rankCandidates),
+    title,
+    btn.dataset.rankAlt || '',
+  ];
+  const uniqueTitleCandidates = [...new Set(titleCandidates.map(value => String(value).trim()).filter(Boolean))];
   const originalText = btn.querySelector('.weekly-rank-score')?.textContent || '';
   btn.disabled = true;
   btn.classList.add('is-loading');
@@ -356,10 +392,11 @@ async function openRankingMovie(btn) {
 
   try {
     let found = null;
-    for (const candidate of titleCandidates) {
+    for (const candidate of uniqueTitleCandidates) {
       found = await API.findPlayableMovie(candidate, {
         year: btn.dataset.rankYear || '',
         serverIds: HOME_SEARCH_SERVERS,
+        strict: true,
       });
       if (found) break;
     }

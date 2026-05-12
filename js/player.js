@@ -110,6 +110,7 @@ function renderMovieInfo(m) {
   const tmdbRuntime = m.tmdb?.runtime ? `${m.tmdb.runtime} phút` : '';
   const anilistRuntime = m.anilist?.duration ? `${m.anilist.duration} phút/tập` : '';
   const anilistEpisodes = m.anilist?.episodes ? `${m.anilist.episodes} tập` : '';
+  const originName = shouldShowOriginName(m) ? m.origin_name : '';
   set('movie-sub', [
     m.year || m.tmdb?.year || m.anilist?.season_year,
     m.quality,
@@ -119,12 +120,12 @@ function renderMovieInfo(m) {
     omdbRating,
     tmdbRuntime || anilistRuntime,
     anilistEpisodes,
-    m.origin_name,
+    originName,
   ].filter(Boolean).join(' · '));
-  set('movie-desc', m.anilist?.description || m.tmdb?.overview || m.description || m.omdb?.plot || '');
+  set('movie-desc', m.description || m.anilist?.description || m.tmdb?.overview || m.omdb?.plot || '');
 
   const posterEl = document.getElementById('movie-poster');
-  const posterSrc = m.anilist?.cover_url || m.tmdb?.poster_url || m.poster_url || m.thumb_url;
+  const posterSrc = m.poster_url || m.thumb_url || m.anilist?.cover_url || m.tmdb?.poster_url || m.omdb?.poster;
   if (posterEl && posterSrc) {
     posterEl.src = posterSrc;
     posterEl.onerror = function () { this.style.display = 'none'; };
@@ -156,7 +157,8 @@ function renderMovieInfo(m) {
 
   const castEl = document.getElementById('movie-cast');
   if (castEl) {
-    const cast = m.tmdb?.cast || [];
+    const sourceCast = asNameList(m.actor || m.actors).map(name => ({ name, character: '' }));
+    const cast = sourceCast.length ? sourceCast : (m.tmdb?.cast || []);
     const animeCharacters = (m.anilist?.characters || []).map(item => ({
       name: item.voice_actor || item.name,
       character: item.voice_actor ? item.name : item.role,
@@ -189,6 +191,45 @@ function renderMovieInfo(m) {
 
 function escHtml(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function asNameList(value) {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : String(value).split(/[,;|]/);
+  return list
+    .map(item => {
+      if (typeof item === 'object') return item.name || item.title || '';
+      return item;
+    })
+    .map(name => String(name || '').trim())
+    .filter(Boolean);
+}
+
+function titleKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isVietnameseMovie(movie) {
+  const taxonomy = [
+    ...(movie?.category || []),
+    ...(movie?.country || []),
+  ].map(item => {
+    if (typeof item === 'object') return `${item.name || ''} ${item.slug || ''}`;
+    return item;
+  }).join(' ');
+  return /viet[-\s]?nam|việt\s*nam|vietnam/i.test(taxonomy);
+}
+
+function shouldShowOriginName(movie) {
+  if (!movie?.origin_name) return false;
+  if (isVietnameseMovie(movie) && titleKey(movie.origin_name) !== titleKey(movie.name)) return false;
+  return true;
 }
 
 function movieForLibrary(movie = PlayerState.movie) {

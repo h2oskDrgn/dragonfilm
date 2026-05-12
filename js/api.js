@@ -143,6 +143,18 @@ const API = {
     return arr.map(item => this._normalizeTaxonomyItem(item)).filter(Boolean);
   },
 
+  _normalizePeopleList(value) {
+    if (!value) return [];
+    const list = Array.isArray(value) ? value : String(value).split(/[,;|]/);
+    return list
+      .map(item => {
+        if (typeof item === 'object') return item.name || item.title || '';
+        return item;
+      })
+      .map(name => String(name || '').trim())
+      .filter(Boolean);
+  },
+
   async getGenresFromServer(server, options = {}) {
     const s = server || this._current;
     const cfg = this._cfgFor(s);
@@ -203,6 +215,8 @@ const API = {
         lang: raw.language || raw.lang || 'Vietsub',
         category: normArr(raw.categories || raw.category || raw.genre || []),
         country: normArr(raw.nations || raw.country || []),
+        actor: this._normalizePeopleList(raw.actor || raw.actors || raw.cast),
+        director: this._normalizePeopleList(raw.director || raw.directors),
         _server: server || this._current,
       };
     }
@@ -221,6 +235,8 @@ const API = {
       lang: raw.lang || raw.sub_docso || '',
       category: raw.category || [],
       country: raw.country || [],
+      actor: this._normalizePeopleList(raw.actor || raw.actors || raw.cast),
+      director: this._normalizePeopleList(raw.director || raw.directors),
       _server: server || this._current,
     };
   },
@@ -418,8 +434,43 @@ const API = {
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
+  },
+
+  _taxonomyText(movie) {
+    return [
+      ...(movie?.category || []),
+      ...(movie?.country || []),
+    ].map(item => {
+      if (typeof item === 'object') return `${item.name || ''} ${item.slug || ''}`;
+      return item;
+    }).join(' ');
+  },
+
+  _isVietnameseMovie(movie) {
+    return /viet[-\s]?nam|việt\s*nam|vietnam/i.test(this._taxonomyText(movie));
+  },
+
+  _externalTitleCandidates(movie) {
+    const clean = (value) => String(value || '')
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/\b(vietsub|thuyet minh|long tieng|full|hd|fhd|4k)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const name = clean(movie?.name);
+    const origin = clean(movie?.origin_name);
+    const slugTitle = clean(String(movie?.slug || '').replace(/-/g, ' '));
+    const nameKey = this._titleKey(name);
+    const originKey = this._titleKey(origin);
+    const base = this._isVietnameseMovie(movie)
+      ? [name, originKey && originKey === nameKey ? origin : '', slugTitle]
+      : [origin, name, slugTitle];
+
+    return [...new Set(base.filter(Boolean))];
   },
 
   _scoreTmdbResult(query, year, result) {
@@ -440,9 +491,17 @@ const API = {
     });
     const resultYear = String(result?.release_date || '').slice(0, 4);
     if (year && resultYear === year) score += 18;
+    else if (year && resultYear) score -= 35;
     score += Math.min(8, Number(result?.vote_count || 0) / 1000);
     score += Math.min(8, Number(result?.popularity || 0) / 20);
     return score;
+  },
+
+  _isAcceptableExternalYearMatch(expectedYear, resultYear) {
+    const expected = Number(String(expectedYear || '').match(/\d{4}/)?.[0] || 0);
+    const found = Number(String(resultYear || '').match(/\d{4}/)?.[0] || 0);
+    if (!expected || !found) return true;
+    return Math.abs(expected - found) <= 1;
   },
 
   _stripHtml(value) {
@@ -704,6 +763,8 @@ const API = {
 
   _scoreLocalMovieResult(query, year, movie) {
     const target = this._titleKey(query);
+    if (!target) return 0;
+    const targetWords = target.split(/\s+/).filter(word => word.length > 1);
     const candidates = [
       movie?.origin_name,
       movie?.name,
@@ -712,15 +773,34 @@ const API = {
     let score = 0;
     candidates.forEach(candidate => {
       if (candidate === target) score = Math.max(score, 100);
-      else if (candidate.includes(target) || target.includes(candidate)) score = Math.max(score, 82);
+      else if (candidate.includes(target) || target.includes(candidate)) {
+        const candidateWords = candidate.split(/\s+/).filter(word => word.length > 1);
+        const overlap = targetWords.filter(word => candidateWords.includes(word)).length;
+        const targetCoverage = targetWords.length ? overlap / targetWords.length : 0;
+        const candidateCoverage = candidateWords.length ? overlap / candidateWords.length : 0;
+        if (targetCoverage >= 0.85 && candidateCoverage >= 0.65) score = Math.max(score, 88);
+        else if (targetWords.length >= 3 && targetCoverage >= 0.8) score = Math.max(score, 78);
+      }
       else {
-        const words = target.split(/\s+/).filter(word => word.length > 2);
-        const overlap = words.filter(word => candidate.includes(word)).length;
-        score = Math.max(score, overlap * 14);
+        const candidateWords = candidate.split(/\s+/).filter(word => word.length > 1);
+        const overlap = targetWords.filter(word => candidateWords.includes(word)).length;
+        const targetCoverage = targetWords.length ? overlap / targetWords.length : 0;
+        const candidateCoverage = candidateWords.length ? overlap / candidateWords.length : 0;
+        score = Math.max(score, Math.round(Math.min(targetCoverage, candidateCoverage) * 86));
       }
     });
-    if (year && String(movie?.year || '').includes(String(year))) score += 14;
+    const movieYear = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    if (year && movieYear && this._isAcceptableExternalYearMatch(year, movieYear)) score += 14;
+    else if (year && movieYear) score -= 45;
     return score;
+  },
+
+  _isStrongLocalMovieMatch(query, year, movie, strict = false) {
+    const score = this._scoreLocalMovieResult(query, year, movie);
+    const movieYear = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    const hasYearMismatch = Boolean(year && movieYear && !this._isAcceptableExternalYearMatch(year, movieYear));
+    if (hasYearMismatch) return false;
+    return score >= (strict || year ? 82 : 70);
   },
 
   async findPlayableMovie(query, options = {}) {
@@ -728,10 +808,11 @@ const API = {
     if (!title) return null;
     const serverIds = options.serverIds || Object.keys(this.servers);
     const year = String(options.year || '').match(/\d{4}/)?.[0] || '';
+    const strict = Boolean(options.strict);
     const result = await this.searchAll(title, 1, serverIds);
     const candidates = (result?.items || [])
       .map(movie => ({ movie, score: this._scoreLocalMovieResult(title, year, movie) }))
-      .filter(item => item.score >= 38)
+      .filter(item => this._isStrongLocalMovieMatch(title, year, item.movie, strict))
       .sort((a, b) => b.score - a.score)
       .slice(0, 8);
 
@@ -745,6 +826,7 @@ const API = {
         if (!slug) continue;
         const detail = await this.getDetailFromServer(server, slug, { quiet: true });
         if (!detail || !this._hasPlayableEpisode(detail)) continue;
+        if (!this._isStrongLocalMovieMatch(title, year, detail, strict)) continue;
         return {
           ...movie,
           ...detail,
@@ -858,6 +940,10 @@ const API = {
         const results = searches.flatMap(data => data?.results || []);
         const best = results
           .map(item => ({ item, score: this._scoreTmdbResult(title, year, item) }))
+          .filter(({ item, score }) => {
+            const resultYear = String(item?.release_date || '').slice(0, 4);
+            return score >= 52 && this._isAcceptableExternalYearMatch(year, resultYear);
+          })
           .sort((a, b) => b.score - a.score)[0]?.item;
         if (best?.id) {
           detail = await this._fetchTmdb(`/movie/${best.id}`, { append_to_response: 'credits' });
@@ -918,20 +1004,7 @@ const API = {
   },
 
   _omdbTitleCandidates(movie) {
-    const clean = (value) => String(value || '')
-      .replace(/\([^)]*\)/g, ' ')
-      .replace(/\[[^\]]*\]/g, ' ')
-      .replace(/\b(vietsub|thuyet minh|long tieng|full|hd|fhd|4k)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    const candidates = [
-      clean(movie?.origin_name),
-      clean(movie?.name),
-      clean(String(movie?.slug || '').replace(/-/g, ' ')),
-    ].filter(Boolean);
-
-    return [...new Set(candidates)];
+    return this._externalTitleCandidates(movie);
   },
 
   _normalizeOmdb(raw) {
@@ -996,6 +1069,10 @@ const API = {
     }
 
     const normalized = this._normalizeOmdb(found);
+    if (normalized && !this._isAcceptableExternalYearMatch(year, normalized.year)) {
+      this._omdbCacheSet(cacheKey, null);
+      return null;
+    }
     this._omdbCacheSet(cacheKey, normalized);
     return normalized;
   },
@@ -1191,10 +1268,11 @@ const API = {
   },
 
   _movieKey(movie) {
-    const name = String(movie.origin_name || movie.name || movie.slug || '')
+    const name = String(this._externalTitleCandidates(movie)[0] || movie.name || movie.origin_name || movie.slug || '')
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
     return `${name}:${movie.year || ''}`;

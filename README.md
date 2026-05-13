@@ -43,7 +43,8 @@ DragonFilm/
     ├── auth.js         # Auth localStorage, history, toast, menu
     ├── main.js         # Logic trang chủ, lọc, tìm kiếm, render card/hero
     ├── player.js       # Logic player, server/tập, lịch sử xem, next tập
-    └── annouce.js      # Script phụ nếu cần thông báo
+    ├── history.js      # Logic lịch sử, xem sau, đã thích, xuất/nhập dữ liệu
+    └── annouce.js      # Helper thông báo phụ, giữ tên cũ để tương thích
 ```
 
 ## Cách chạy local

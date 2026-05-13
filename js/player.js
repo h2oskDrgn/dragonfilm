@@ -43,6 +43,8 @@ const Icons = {
    ============================================================ */
 document.addEventListener('DOMContentLoaded', async () => {
   initMovieLibraryActions();
+  initApiServerButtons();
+  initNextEpisodeButton();
   PlayerState.slug   = qp('slug')   || '';
   PlayerState.server = qp('server') || API.currentServer;
   PlayerState.requestedEpisodeServer = parseInt(qp('epServer') || '0', 10) || 0;
@@ -127,10 +129,15 @@ function renderMovieInfo(m) {
   set('movie-desc', m.description || m.anilist?.description || tmdb?.overview || omdb?.plot || '');
 
   const posterEl = document.getElementById('movie-poster');
+  const posterWrap = document.getElementById('poster-wrap');
   const posterSrc = m.poster_url || m.thumb_url || m.anilist?.cover_url || tmdb?.poster_url || omdb?.poster;
   if (posterEl && posterSrc) {
+    if (posterWrap) posterWrap.hidden = true;
     posterEl.src = posterSrc;
-    posterEl.onerror = function () { this.style.display = 'none'; };
+    posterEl.onload = () => { if (posterWrap) posterWrap.hidden = false; };
+    posterEl.onerror = () => { if (posterWrap) posterWrap.hidden = true; };
+  } else if (posterWrap) {
+    posterWrap.hidden = true;
   }
 
   const tagsEl = document.getElementById('movie-tags');
@@ -354,6 +361,7 @@ function renderEpisodes(episodes) {
 
   if (!episodes?.length) {
     cont.innerHTML = '<p style="color:var(--text-muted);font-size:14px">Chưa có tập phim.</p>';
+    updateNextEpisodeButton();
     return;
   }
 
@@ -377,6 +385,7 @@ function renderEpisodes(episodes) {
       grid.appendChild(btn);
     });
   });
+  updateNextEpisodeButton();
 }
 
 function setActiveEpBtn(si, ei) {
@@ -515,9 +524,17 @@ function updateMovieUrl() {
     slug: PlayerState.slug,
     server: PlayerState.server,
   });
+  params.set('epServer', PlayerState.currentServer);
+  params.set('ep', PlayerState.currentEp);
   const sources = encodeServerSources(PlayerState.serverSlugs);
   if (sources) params.set('sources', sources);
   window.history.replaceState({}, '', `movie.html?${params.toString()}`);
+}
+
+function initApiServerButtons() {
+  document.querySelectorAll('.server-btn[data-server]').forEach(btn => {
+    btn.addEventListener('click', () => activateApiServer(btn.dataset.server, false));
+  });
 }
 
 function activateApiServer(server, shouldResume = false) {
@@ -589,6 +606,47 @@ function playEpisode(serverIdx, epIdx, shouldResume = false) {
   };
   startWatchTracking(shouldResume);
   buildPlayer(source.src, source.isIframe, shouldResume, source.fallbackSrc);
+  updateNextEpisodeButton();
+  updateMovieUrl();
+}
+
+function getNextPlayableEpisode() {
+  const serverIdx = PlayerState.currentServer ?? 0;
+  const startIdx = (PlayerState.currentEp ?? -1) + 1;
+  const items = PlayerState.episodes?.[serverIdx]?.items || [];
+
+  for (let epIdx = startIdx; epIdx < items.length; epIdx += 1) {
+    if (hasPlayableLink(items[epIdx])) {
+      return { serverIdx, epIdx, episode: items[epIdx] };
+    }
+  }
+  return null;
+}
+
+function updateNextEpisodeButton() {
+  const nextBtn = document.getElementById('btn-next-episode');
+  const nextLabel = document.getElementById('next-episode-label');
+  if (!nextBtn || !nextLabel) return;
+
+  const next = getNextPlayableEpisode();
+  if (!next) {
+    nextBtn.disabled = true;
+    nextLabel.textContent = PlayerState.episodes?.length ? 'Đã hết tập' : 'Đang tải tập...';
+    nextBtn.title = PlayerState.episodes?.length ? 'Không còn tập tiếp theo' : 'Đang tải danh sách tập';
+    return;
+  }
+
+  const episodeName = next.episode?.name || `Tập ${next.epIdx + 1}`;
+  nextBtn.disabled = false;
+  nextLabel.textContent = `Tập tiếp theo: ${episodeName}`;
+  nextBtn.title = `Phát ${episodeName}`;
+}
+
+function initNextEpisodeButton() {
+  document.getElementById('btn-next-episode')?.addEventListener('click', () => {
+    const next = getNextPlayableEpisode();
+    if (next) playEpisode(next.serverIdx, next.epIdx, false);
+  });
 }
 
 function getRequestedPlayableEpisode(episodes) {
@@ -750,7 +808,7 @@ function buildPlayer(src, isIframe, shouldResume = false, fallbackSrc = '') {
     // Chỉ resume thời gian dở khi shouldResume = true (tức là lần đầu vào phim)
     // Khi chuyển tập (shouldResume = false) thì luôn bắt đầu từ đầu
     if (shouldResume) {
-      const t = ResumeTime.get(PlayerState.slug);
+      const t = ResumeTime.get(episodeResumeKey()) || ResumeTime.get(PlayerState.slug);
       if (t > 5 && t < video.duration - 5) {
         video.currentTime = t;
         showToast(`Tiếp tục từ ${fmtTime(t)}`, 'info');

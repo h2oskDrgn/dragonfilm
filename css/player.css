@@ -9,6 +9,12 @@
   padding-top: var(--header-h);
 }
 
+.player-shell {
+  background: #000;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
 .player-container { max-width: min(1100px, 100%); margin: 0 auto; padding: 0 20px; overflow-x: hidden; }
 
 /* ---- Actions below player ---- */
@@ -446,6 +452,9 @@
 }
 
 /* ---- Episode selector ---- */
+.player-source-section { margin-bottom: 24px; }
+.player-source-title { margin-bottom: 12px; }
+.player-source-bar { margin-bottom: 16px; }
 .player-options { margin-bottom: 20px; }
 .player-options-title {
   font-family: var(--font-title); font-weight: 700; font-size: 12px;

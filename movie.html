@@ -6,8 +6,8 @@
   <title>Đang Tải... - DragonFilm</title>
   <meta name="description" content="Xem phim online - DragonFilm">
   <link rel="icon" href="assets/logo.png?v=10" type="image/png">
-  <link rel="stylesheet" href="css/style.css?v=20">
-  <link rel="stylesheet" href="css/player.css?v=12">
+  <link rel="stylesheet" href="css/style.css?v=22">
+  <link rel="stylesheet" href="css/player.css?v=13">
 </head>
 <body class="player-page">
 
@@ -30,11 +30,10 @@
     <a href="history.html">Lịch Sử</a>
   </nav>
 
-  <div class="header-search">
+  <div class="header-search" data-header-search>
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-    <input type="text" placeholder="Tìm phim..." id="search-header" autocomplete="off"
-      onkeydown="if(event.key==='Enter'){window.location='index.html?q='+encodeURIComponent(this.value);}">
-    <button onclick="window.location='index.html?q='+encodeURIComponent(document.getElementById('search-header').value)">
+    <input type="text" placeholder="Tìm phim..." id="search-header" autocomplete="off">
+    <button aria-label="Tìm kiếm">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </button>
   </div>
@@ -68,7 +67,7 @@
 <main>
   <div class="player-section">
     <!-- Video Player -->
-    <div id="player-wrap" style="background:#000;max-width:1100px;margin:0 auto">
+    <div id="player-wrap" class="player-shell">
       <div class="spinner-wrap"><div class="spinner"></div></div>
     </div>
     <div class="player-next-wrap">
@@ -83,9 +82,8 @@
     <div class="player-container">
       <div class="movie-detail-wrap">
         <div class="movie-detail-header">
-          <div class="movie-detail-poster" id="poster-wrap" style="display:none">
-            <img id="movie-poster" src="" alt="Poster"
-              onerror="document.getElementById('poster-wrap').style.display='none'">
+          <div class="movie-detail-poster" id="poster-wrap" hidden>
+            <img id="movie-poster" src="" alt="Poster">
           </div>
           <div class="movie-detail-info">
             <h1 class="movie-detail-title" id="movie-title">Đang tải...</h1>
@@ -101,12 +99,12 @@
         </div>
 
         <!-- Server & Episode Selector -->
-        <div style="margin-bottom:24px">
-          <div class="player-options-title" style="margin-bottom:12px">Nguồn Phim</div>
-          <div class="server-bar" style="margin-bottom:16px">
-            <button class="server-btn active" data-server="kkphim" onclick="switchApiServer('kkphim',this)">Server 1 · KKP</button>
-            <button class="server-btn" data-server="ophim" onclick="switchApiServer('ophim',this)">Server 2 · OP</button>
-            <button class="server-btn" data-server="nguonc" onclick="switchApiServer('nguonc',this)">Server 3 · NC</button>
+        <div class="player-source-section">
+          <div class="player-options-title player-source-title">Nguồn Phim</div>
+          <div class="server-bar player-source-bar">
+            <button class="server-btn active" data-server="kkphim">Server 1 · KKP</button>
+            <button class="server-btn" data-server="ophim">Server 2 · OP</button>
+            <button class="server-btn" data-server="nguonc">Server 3 · NC</button>
           </div>
           <div class="source-watch-note">
             <strong>Lưu ý:</strong> Nếu phim bị giật, lag hoặc tải chậm, hãy thử chuyển sang server khác. Trường hợp không xem được, bạn có thể bật 1.1.1.1 (Cloudflare WARP) hoặc VPN vì một số nhà mạng có thể chặn kết nối tới nguồn phát.
@@ -194,71 +192,9 @@
 
 <div id="toast-container"></div>
 
-<script src="js/api.js?v=21"></script>
-<script src="js/auth.js?v=11"></script>
+<script src="js/api.js?v=22"></script>
+<script src="js/auth.js?v=12"></script>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-<script src="js/player.js?v=22"></script>
-<script>
-const activatePlayerServer = window.switchApiServer;
-window.switchApiServer = function(serverId) {
-  if (typeof activatePlayerServer === 'function') activatePlayerServer(serverId);
-};
-
-(() => {
-  const nextBtn = document.getElementById('btn-next-episode');
-  const nextLabel = document.getElementById('next-episode-label');
-  if (!nextBtn || !nextLabel || typeof playEpisode !== 'function') return;
-
-  function episodeHasSource(ep) {
-    return typeof hasPlayableLink === 'function'
-      ? hasPlayableLink(ep)
-      : Boolean(ep?.link_embed || ep?.link_m3u8);
-  }
-
-  function getNextPlayableEpisode() {
-    const serverIdx = PlayerState?.currentServer ?? 0;
-    const startIdx = (PlayerState?.currentEp ?? -1) + 1;
-    const items = PlayerState?.episodes?.[serverIdx]?.items || [];
-
-    for (let epIdx = startIdx; epIdx < items.length; epIdx += 1) {
-      if (episodeHasSource(items[epIdx])) {
-        return { serverIdx, epIdx, episode: items[epIdx] };
-      }
-    }
-    return null;
-  }
-
-  function updateNextEpisodeButton() {
-    const next = getNextPlayableEpisode();
-    if (!next) {
-      nextBtn.disabled = true;
-      nextLabel.textContent = 'Đã hết tập';
-      nextBtn.title = 'Không còn tập tiếp theo';
-      return;
-    }
-
-    const episodeName = next.episode?.name || `Tập ${next.epIdx + 1}`;
-    nextBtn.disabled = false;
-    nextLabel.textContent = `Tập tiếp theo: ${episodeName}`;
-    nextBtn.title = `Phát ${episodeName}`;
-  }
-
-  const originalPlayEpisode = playEpisode;
-  playEpisode = function playEpisodeWithNextButton(...args) {
-    const result = originalPlayEpisode.apply(this, args);
-    updateNextEpisodeButton();
-    return result;
-  };
-
-  nextBtn.addEventListener('click', () => {
-    const next = getNextPlayableEpisode();
-    if (next) playEpisode(next.serverIdx, next.epIdx, false);
-  });
-})();
-
-document.getElementById('movie-poster')?.addEventListener('load', function() {
-  document.getElementById('poster-wrap').style.display = 'block';
-});
-</script>
+<script src="js/player.js?v=23"></script>
 </body>
 </html>

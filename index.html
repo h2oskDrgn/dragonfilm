@@ -6,7 +6,7 @@
   <title>DragonFilm - Phim Hay Share Ngay</title>
   <meta name="description" content="Xem phim online miễn phí, chất lượng cao - DragonFilm">
   <link rel="icon" href="assets/logo.png?v=10" type="image/png">
-  <link rel="stylesheet" href="css/style.css?v=21">
+  <link rel="stylesheet" href="css/style.css?v=22">
 </head>
 <body>
 
@@ -99,7 +99,7 @@
         </div>
         <p class="hero-desc">Các bộ anime mới nhất, từ One Piece đến Demon Slayer, cập nhật nhanh nhất Việt Nam với vietsub chất lượng cao.</p>
         <div class="hero-actions">
-          <button class="btn-primary" onclick="document.querySelector('[data-slug=hoat-hinh]')?.click()">Xem Anime</button>
+          <button class="btn-primary" type="button" data-hero-filter="type" data-slug="hoat-hinh">Xem Anime</button>
         </div>
       </div>
     </div>
@@ -116,7 +116,7 @@
         </div>
         <p class="hero-desc">Phim bộ Hàn Quốc đặc sắc, nội dung hấp dẫn, diễn xuất đỉnh cao. Cập nhật tập mới nhanh nhất!</p>
         <div class="hero-actions">
-          <button class="btn-primary" onclick="document.querySelector('[data-slug=han-quoc]')?.click()">Xem Phim Hàn</button>
+          <button class="btn-primary" type="button" data-hero-filter="country" data-slug="han-quoc">Xem Phim Hàn</button>
         </div>
       </div>
     </div>
@@ -135,7 +135,7 @@
   <div class="container" id="movies">
 
     <!-- Filter by genre -->
-    <div class="filter-bar genre-filter-bar" style="margin-top:32px">
+    <div class="filter-bar genre-filter-bar">
       <span class="filter-label">Thể Loại:</span>
       <button class="chip chip-more" id="btn-all-genres" type="button" aria-expanded="false" aria-controls="all-genres-panel">
         Tất cả thể loại
@@ -169,10 +169,10 @@
     </div>
 
     <!-- Search bar -->
-    <div style="margin-bottom:28px">
-      <div class="header-search" style="max-width:100%;border-radius:10px;padding:4px 16px">
+    <div class="home-search-row">
+      <div class="header-search home-search">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" placeholder="Tìm tên phim, diễn viên..." id="search-input" autocomplete="off" style="padding:10px 0;font-size:15px">
+        <input class="home-search-input" type="text" placeholder="Tìm tên phim, diễn viên..." id="search-input" autocomplete="off">
         <div class="search-popup search-popup-wide" data-search-popup="search-input" hidden></div>
       </div>
     </div>
@@ -250,7 +250,7 @@
     <section class="section" id="movies-main">
       <div class="section-header">
         <h2 class="section-title" id="section-title">Đề Xuất Theo Xếp Hạng</h2>
-        <span id="result-info" style="font-size:13px;color:var(--text-muted);font-family:var(--font-title)"></span>
+        <span class="result-info" id="result-info"></span>
       </div>
       <div class="movie-grid" id="movie-grid"></div>
       <div class="pagination" id="pagination"></div>
@@ -335,29 +335,8 @@
 
 <div id="toast-container"></div>
 
-<script src="js/api.js?v=21"></script>
-<script src="js/auth.js?v=11"></script>
-<script src="js/main.js?v=23"></script>
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const params = new URLSearchParams(location.search);
-  const type   = params.get('type');
-  const genre  = params.get('genre');
-  const q      = params.get('q');
-
-  if (type)  setTimeout(() => document.querySelector(`#type-chips [data-slug="${type}"]`)?.click(),  300);
-  if (genre) setTimeout(() => document.querySelector(`#genre-chips [data-slug="${genre}"]`)?.click(), 300);
-  if (q) {
-    setTimeout(() => {
-      const inp = document.getElementById('search-input');
-      if (inp) {
-        inp.value = q;
-        inp.dispatchEvent(new Event('input'));
-        inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-      }
-    }, 200);
-  }
-});
-</script>
+<script src="js/api.js?v=22"></script>
+<script src="js/auth.js?v=12"></script>
+<script src="js/main.js?v=24"></script>
 </body>
 </html>

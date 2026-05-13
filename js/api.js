@@ -57,6 +57,8 @@ const API = {
     base: 'https://www.omdbapi.com/',
     cachePrefix: 'dragonfilm_omdb_v2_',
     cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
+    disabled: false,
+    warnedDisabled: false,
   },
 
   tmdb: {
@@ -249,6 +251,8 @@ const API = {
 
   // ---- OMDb / IMDb ranking ----
   async _fetchOmdb(params) {
+    if (this.omdb.disabled) return null;
+
     const url = new URL(this.omdb.base);
     url.searchParams.set('apikey', this.omdb.apiKey);
     Object.entries(params || {}).forEach(([key, value]) => {
@@ -257,7 +261,17 @@ const API = {
 
     try {
       const res = await fetch(url.toString());
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.omdb.disabled = true;
+          if (!this.omdb.warnedDisabled) {
+            this.omdb.warnedDisabled = true;
+            console.info('[OMDb] Disabled for this session: API key is unauthorized.');
+          }
+          return null;
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = await res.json();
       return data?.Response === 'False' ? null : data;
     } catch (err) {

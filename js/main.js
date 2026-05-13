@@ -533,14 +533,14 @@ function renderPagination() {
   for (let i = Math.max(1, p-2); i <= Math.min(tp, p+2); i++) pages.add(i);
   pages = [...pages].sort((a,b) => a-b);
 
-  let html = `<button class="page-btn" ${p<=1?'disabled':''} onclick="goPage(${p-1})">‹</button>`;
+  let html = `<button class="page-btn" ${p <= 1 ? 'disabled' : ''} data-page="${p - 1}">‹</button>`;
   let prev = 0;
   for (const pg of pages) {
-    if (pg - prev > 1) html += `<span style="color:var(--text-muted);padding:0 4px">…</span>`;
-    html += `<button class="page-btn${pg===p?' active':''}" onclick="goPage(${pg})">${pg}</button>`;
+    if (pg - prev > 1) html += '<span class="page-gap">…</span>';
+    html += `<button class="page-btn${pg === p ? ' active' : ''}" data-page="${pg}">${pg}</button>`;
     prev = pg;
   }
-  html += `<button class="page-btn" ${p>=tp?'disabled':''} onclick="goPage(${p+1})">›</button>`;
+  html += `<button class="page-btn" ${p >= tp ? 'disabled' : ''} data-page="${p + 1}">›</button>`;
   wrap.innerHTML = html;
 }
 
@@ -551,6 +551,15 @@ function goPage(p) {
   window.scrollTo({ top: document.getElementById('movie-grid')?.offsetTop - 80 || 0, behavior: 'smooth' });
 }
 window.goPage = goPage;
+
+function initPagination() {
+  document.getElementById('pagination')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('.page-btn[data-page]');
+    if (!btn || btn.disabled) return;
+    const page = Number(btn.dataset.page || 1);
+    if (Number.isFinite(page)) goPage(page);
+  });
+}
 
 // ---- Filter chips ----
 function setActiveGenreSlug(slug) {
@@ -951,6 +960,69 @@ function initHero() {
   let timer = setInterval(() => go(current + 1), 5000);
 }
 
+function applyFilter(kind, slug) {
+  if (!kind || !slug) return;
+  state.query = '';
+  if (kind === 'genre') {
+    state.mode = 'genre';
+    state.genre = slug;
+    state.country = '';
+    state.type = '';
+    clearOtherFilters('genre');
+    setActiveGenreSlug(slug);
+  } else if (kind === 'country') {
+    state.mode = 'country';
+    state.genre = '';
+    state.country = slug;
+    state.type = '';
+    clearOtherFilters('country');
+    $$('#country-chips .chip').forEach(chip => chip.classList.toggle('active', chip.dataset.slug === slug));
+  } else if (kind === 'type') {
+    state.mode = 'type';
+    state.genre = '';
+    state.country = '';
+    state.type = slug;
+    clearOtherFilters('type');
+    $$('#type-chips .chip').forEach(chip => chip.classList.toggle('active', chip.dataset.slug === slug));
+  }
+}
+
+function initHeroFilters() {
+  document.querySelector('.hero')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-hero-filter]');
+    if (!btn) return;
+    applyFilter(btn.dataset.heroFilter, btn.dataset.slug);
+    loadMovies();
+    document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function applyInitialRouteParams() {
+  const params = new URLSearchParams(location.search);
+  const q = (params.get('q') || '').trim();
+  const genre = (params.get('genre') || '').trim();
+  const type = (params.get('type') || '').trim();
+
+  if (q) {
+    state.mode = 'search';
+    state.query = q;
+    const input = document.getElementById('search-input');
+    const header = document.getElementById('search-header');
+    if (input) input.value = q;
+    if (header) header.value = q;
+    return;
+  }
+
+  if (genre) {
+    applyFilter('genre', genre);
+    return;
+  }
+
+  if (type) {
+    applyFilter('type', type);
+  }
+}
+
 function syncHeroVisibility() {
   const hero = document.querySelector('.hero');
   const movies = document.getElementById('movies');
@@ -967,8 +1039,11 @@ document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initSearch();
   initHero();
+  initHeroFilters();
   initRankingInteractions();
   initMovieLibraryActions();
+  initPagination();
+  applyInitialRouteParams();
   loadWeeklyRankings();
   syncHeroVisibility();
   loadMovies();

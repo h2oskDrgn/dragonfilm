@@ -310,11 +310,34 @@ function initMobileNav() {
   document.addEventListener('click', () => nav?.classList.remove('open'));
 }
 
+// ---- Header search redirect for secondary pages ----
+function initHeaderSearchRedirect() {
+  document.querySelectorAll('[data-header-search]').forEach(search => {
+    const input = search.querySelector('input');
+    const button = search.querySelector('button');
+    if (!input || !button) return;
+
+    const go = () => {
+      const q = input.value.trim();
+      window.location.href = q ? `index.html?q=${encodeURIComponent(q)}` : 'index.html';
+    };
+
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        go();
+      }
+    });
+    button.addEventListener('click', go);
+  });
+}
+
 // ---- Init all ----
 document.addEventListener('DOMContentLoaded', () => {
   initHeaderAuth();
   initModal();
   initGuestNotice();
   initMobileNav();
+  initHeaderSearchRedirect();
   document.body.classList.add('page-enter');
 });

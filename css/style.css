@@ -407,6 +407,7 @@ main { padding-top: var(--header-h); min-height: 100vh; }
 .filter-bar {
   display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; align-items: center;
 }
+.genre-filter-bar { margin-top: 32px; }
 .filter-label { font-family: var(--font-title); font-size: 13px; color: var(--text-muted); font-weight: 600; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
@@ -464,6 +465,23 @@ main { padding-top: var(--header-h); min-height: 100vh; }
   text-align: center;
   padding: 8px 10px;
   border-radius: 12px;
+}
+
+.home-search-row { margin-bottom: 28px; }
+.home-search {
+  max-width: 100%;
+  border-radius: 10px;
+  padding: 4px 16px;
+}
+.home-search-input {
+  padding: 10px 0;
+  font-size: 15px;
+}
+
+.result-info {
+  font-family: var(--font-title);
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .server-bar {
@@ -908,6 +926,10 @@ main { padding-top: var(--header-h); min-height: 100vh; }
 .page-btn:hover { border-color: var(--green); color: var(--green); }
 .page-btn.active { background: var(--green); border-color: var(--green); color: var(--accent-ink); }
 .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-gap {
+  color: var(--text-muted);
+  padding: 0 4px;
+}
 
 /* ============================================================
    MODAL (Login / Register)
@@ -1109,6 +1131,13 @@ main { padding-top: var(--header-h); min-height: 100vh; }
   border-bottom: 1px solid var(--border);
   margin-bottom: 32px;
 }
+.page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
 .page-header-title { font-family: var(--font-display); font-size: 40px; color: var(--white); }
 .page-header-sub { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
 .history-note {
@@ -1127,6 +1156,13 @@ main { padding-top: var(--header-h); min-height: 100vh; }
 }
 .history-item:hover { border-color: var(--green); background: var(--bg3); }
 .history-poster { width: 60px; height: 90px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+.history-poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg3);
+  opacity: 0.4;
+}
 .history-info { flex: 1; min-width: 0; text-decoration: none; }
 .history-title { font-family: var(--font-title); font-weight: 700; font-size: 16px; color: var(--text); margin-bottom: 4px; }
 .history-item:hover .history-title { color: var(--green); }
@@ -1147,6 +1183,24 @@ main { padding-top: var(--header-h); min-height: 100vh; }
   padding: 2px 7px;
 }
 .history-progress { margin-top: 8px; }
+.history-progress-caption {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.history-progress-fill { width: 30%; }
+.history-play-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.history-empty-icon {
+  font-size: 48px;
+  opacity: 0.3;
+}
+.history-empty-cta {
+  display: inline-block;
+  margin-top: 16px;
+}
 .progress-bar-wrap { background: var(--bg3); border-radius: 4px; height: 4px; overflow: hidden; }
 .progress-bar-fill { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.3s ease; }
 

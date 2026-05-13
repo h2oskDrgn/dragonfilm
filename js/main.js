@@ -158,7 +158,7 @@ function renderCard(m) {
   const anilistGenre = m.anilist?.genres?.[0] || '';
   const tmdbGenre = m.tmdb?.genres?.[0]?.name || '';
   const omdbGenre = m.omdb?.genre ? m.omdb.genre.split(',')[0].trim() : '';
-  const genreText = anilistGenre || tmdbGenre || omdbGenre;
+  const genreText = localCategoryLabel(m) || anilistGenre || tmdbGenre || omdbGenre;
   const libraryData = movieLibraryDataset(m);
   const isWatchLater = typeof MovieLibrary !== 'undefined' && MovieLibrary.has('watchLater', m);
   const isLiked = typeof MovieLibrary !== 'undefined' && MovieLibrary.has('liked', m);
@@ -766,10 +766,10 @@ function updateHeroFromMovies(items) {
   const picks = (items || []).filter(movie => movie?.name).slice(0, slides.length);
   picks.forEach((m, index) => {
     const slide = slides[index];
-    const bg = m.anilist?.banner_url || m.tmdb?.backdrop_url || m.anilist?.cover_url || m.tmdb?.poster_url || m.omdb?.poster || m.poster_url || m.thumb_url;
+    const bg = m.poster_url || m.thumb_url || m.anilist?.banner_url || m.tmdb?.backdrop_url || m.anilist?.cover_url || m.tmdb?.poster_url || m.omdb?.poster;
     const ratingText = formatRatingText(m);
-    const genreText = m.anilist?.genres?.[0] || m.tmdb?.genres?.[0]?.name || (m.omdb?.genre ? m.omdb.genre.split(',')[0].trim() : localCategoryLabel(m));
-    const desc = m.anilist?.description || m.tmdb?.overview || (m.omdb?.plot && m.omdb.plot !== 'N/A'
+    const genreText = localCategoryLabel(m) || m.anilist?.genres?.[0] || m.tmdb?.genres?.[0]?.name || (m.omdb?.genre ? m.omdb.genre.split(',')[0].trim() : '');
+    const desc = m.description || m.anilist?.description || m.tmdb?.overview || (m.omdb?.plot && m.omdb.plot !== 'N/A'
       ? m.omdb.plot
       : `Đề xuất từ DragonFilm, có trên ${renderSourceBadges(m, HOME_RECOMMEND_SERVERS).replace(/<[^>]+>/g, ' ').trim() || 'SV 1 và SV 3'}.`);
 

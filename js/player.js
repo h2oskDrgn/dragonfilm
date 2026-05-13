@@ -104,15 +104,17 @@ function renderMovieInfo(m) {
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   set('movie-title', m.name || '');
-  const omdbRating = m.omdb?.ratingValue ? `IMDb ${m.omdb.imdbRating}` : '';
-  const tmdbRating = m.tmdb?.vote_average ? `TMDB ${m.tmdb.vote_average.toFixed(1)}` : '';
+  const tmdb = trustedTmdbInfo(m) ? m.tmdb : null;
+  const omdb = trustedOmdbInfo(m) ? m.omdb : null;
+  const omdbRating = omdb?.ratingValue ? `IMDb ${omdb.imdbRating}` : '';
+  const tmdbRating = tmdb?.vote_average ? `TMDB ${tmdb.vote_average.toFixed(1)}` : '';
   const anilistRating = m.anilist?.average_score ? `AniList ${m.anilist.average_score}%` : '';
-  const tmdbRuntime = m.tmdb?.runtime ? `${m.tmdb.runtime} phút` : '';
+  const tmdbRuntime = tmdb?.runtime ? `${tmdb.runtime} phút` : '';
   const anilistRuntime = m.anilist?.duration ? `${m.anilist.duration} phút/tập` : '';
   const anilistEpisodes = m.anilist?.episodes ? `${m.anilist.episodes} tập` : '';
   const originName = shouldShowOriginName(m) ? m.origin_name : '';
   set('movie-sub', [
-    m.year || m.tmdb?.year || m.anilist?.season_year,
+    m.year || tmdb?.year || m.anilist?.season_year,
     m.quality,
     m.lang,
     anilistRating,
@@ -122,10 +124,10 @@ function renderMovieInfo(m) {
     anilistEpisodes,
     originName,
   ].filter(Boolean).join(' · '));
-  set('movie-desc', m.description || m.anilist?.description || m.tmdb?.overview || m.omdb?.plot || '');
+  set('movie-desc', m.description || m.anilist?.description || tmdb?.overview || omdb?.plot || '');
 
   const posterEl = document.getElementById('movie-poster');
-  const posterSrc = m.poster_url || m.thumb_url || m.anilist?.cover_url || m.tmdb?.poster_url || m.omdb?.poster;
+  const posterSrc = m.poster_url || m.thumb_url || m.anilist?.cover_url || tmdb?.poster_url || omdb?.poster;
   if (posterEl && posterSrc) {
     posterEl.src = posterSrc;
     posterEl.onerror = function () { this.style.display = 'none'; };
@@ -135,8 +137,8 @@ function renderMovieInfo(m) {
   if (tagsEl) {
     const anilistGenres = (m.anilist?.genres || []).map(name => ({ name }));
     const anilistStudios = (m.anilist?.studios || []).map(name => ({ name }));
-    const tmdbGenres = (m.tmdb?.genres || []).map(g => ({ name: g.name }));
-    const omdbGenres = String(m.omdb?.genre || '')
+    const tmdbGenres = (tmdb?.genres || []).map(g => ({ name: g.name }));
+    const omdbGenres = String(omdb?.genre || '')
       .split(',')
       .map(g => g.trim())
       .filter(Boolean)
@@ -158,7 +160,7 @@ function renderMovieInfo(m) {
   const castEl = document.getElementById('movie-cast');
   if (castEl) {
     const sourceCast = asNameList(m.actor || m.actors).map(name => ({ name, character: '' }));
-    const cast = sourceCast.length ? sourceCast : (m.tmdb?.cast || []);
+    const cast = sourceCast.length ? sourceCast : (tmdb?.cast || []);
     const animeCharacters = (m.anilist?.characters || []).map(item => ({
       name: item.voice_actor || item.name,
       character: item.voice_actor ? item.name : item.role,
@@ -224,6 +226,70 @@ function isVietnameseMovie(movie) {
     return item;
   }).join(' ');
   return /viet[-\s]?nam|việt\s*nam|vietnam/i.test(taxonomy);
+}
+
+function movieCountrySignals(movie) {
+  const taxonomy = [
+    ...(movie?.category || []),
+    ...(movie?.country || []),
+  ].map(item => {
+    if (typeof item === 'object') return `${item.name || ''} ${item.slug || ''}`;
+    return item;
+  }).join(' ').toLowerCase();
+  const checks = [
+    { re: /han[-\s]?quoc|hàn\s*quốc|korea|south\s*korea/, countries: ['KR'], languages: ['ko'] },
+    { re: /trung[-\s]?quoc|trung\s*quốc|china|hong[-\s]?kong|dai[-\s]?loan|đài\s*loan|taiwan/, countries: ['CN', 'HK', 'TW'], languages: ['zh', 'cn'] },
+    { re: /nhat[-\s]?ban|nhật\s*bản|japan/, countries: ['JP'], languages: ['ja'] },
+    { re: /viet[-\s]?nam|việt\s*nam|vietnam/, countries: ['VN'], languages: ['vi'] },
+    { re: /thai[-\s]?lan|thái\s*lan|thailand/, countries: ['TH'], languages: ['th'] },
+    { re: /au[-\s]?my|âu\s*mỹ|my|mỹ|usa|united\s*states|america/, countries: ['US'], languages: ['en'] },
+    { re: /anh|united\s*kingdom|uk|britain/, countries: ['GB'], languages: ['en'] },
+    { re: /an[-\s]?do|ấn\s*độ|india/, countries: ['IN'], languages: ['hi', 'ta', 'te', 'ml', 'kn'] },
+  ];
+  return checks.reduce((acc, item) => {
+    if (!item.re.test(taxonomy)) return acc;
+    acc.countries.push(...item.countries);
+    acc.languages.push(...item.languages);
+    return acc;
+  }, { countries: [], languages: [] });
+}
+
+function hasTranslatedLocalTitle(movie) {
+  return Boolean(titleKey(movie?.name) && titleKey(movie?.origin_name) && titleKey(movie.name) !== titleKey(movie.origin_name));
+}
+
+function yearMatches(expected, found) {
+  const a = Number(String(expected || '').match(/\d{4}/)?.[0] || 0);
+  const b = Number(String(found || '').match(/\d{4}/)?.[0] || 0);
+  if (!a || !b) return true;
+  return Math.abs(a - b) <= 1;
+}
+
+function trustedTmdbInfo(movie) {
+  const tmdb = movie?.tmdb;
+  if (!tmdb) return false;
+  if (movie?.year && tmdb.year && !yearMatches(movie.year, tmdb.year)) return false;
+  const signals = movieCountrySignals(movie);
+  const countries = new Set(signals.countries.map(code => code.toUpperCase()));
+  const languages = new Set(signals.languages.map(code => code.toLowerCase()));
+  if (countries.size || languages.size) {
+    const infoCountries = (tmdb.origin_country || []).map(code => String(code || '').toUpperCase());
+    const infoLanguage = String(tmdb.original_language || '').toLowerCase();
+    const countryMatch = infoCountries.some(code => countries.has(code));
+    const languageMatch = infoLanguage && languages.has(infoLanguage);
+    if (infoCountries.length || infoLanguage) return Boolean(countryMatch || languageMatch);
+  }
+  if (!movie?.year && !countries.size && !languages.size && hasTranslatedLocalTitle(movie)) return false;
+  return true;
+}
+
+function trustedOmdbInfo(movie) {
+  const omdb = movie?.omdb;
+  if (!omdb) return false;
+  if (movie?.year && omdb.year && !yearMatches(movie.year, omdb.year)) return false;
+  const signals = movieCountrySignals(movie);
+  if (!movie?.year && !signals.countries.length && !signals.languages.length && hasTranslatedLocalTitle(movie)) return false;
+  return true;
 }
 
 function shouldShowOriginName(movie) {
@@ -419,6 +485,31 @@ function renderApiServerButtons() {
   });
 }
 
+function mergeSourceMovieInfo(movie) {
+  if (!movie) return movie;
+  const sameMovieDetails = Object.values(PlayerState.serverAvailability || {})
+    .map(status => status?.movie)
+    .filter(item => item && titleKey(item.name) === titleKey(movie.name));
+  const pick = (field, fallback = '') => {
+    const current = movie[field];
+    if (Array.isArray(current) ? current.length : current) return current;
+    return sameMovieDetails.find(item => Array.isArray(item?.[field]) ? item[field].length : item?.[field])?.[field] || fallback;
+  };
+  return {
+    ...movie,
+    year: pick('year'),
+    quality: pick('quality', movie.quality),
+    lang: pick('lang', movie.lang),
+    category: pick('category', []),
+    country: pick('country', []),
+    actor: pick('actor', []),
+    director: pick('director', []),
+    description: pick('description'),
+    poster_url: pick('poster_url'),
+    thumb_url: pick('thumb_url'),
+  };
+}
+
 function updateMovieUrl() {
   const params = new URLSearchParams({
     slug: PlayerState.slug,
@@ -440,6 +531,7 @@ function activateApiServer(server, shouldResume = false) {
   PlayerState.server = server;
   PlayerState.slug = status.slug;
   API.currentServer = server;
+  status.movie = mergeSourceMovieInfo(status.movie);
   PlayerState.movie = status.movie;
   renderApiServerButtons();
   renderMovieInfo(status.movie);

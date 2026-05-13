@@ -55,7 +55,7 @@ const API = {
   omdb: {
     apiKey: '44d2be9c',
     base: 'https://www.omdbapi.com/',
-    cachePrefix: 'dragonfilm_omdb_',
+    cachePrefix: 'dragonfilm_omdb_v2_',
     cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
   },
 
@@ -63,7 +63,7 @@ const API = {
     apiKey: 'b3b5d5d4a229be123eb3cafe48dd6f85',
     base: 'https://api.themoviedb.org/3',
     imgBase: 'https://image.tmdb.org/t/p',
-    cachePrefix: 'dragonfilm_tmdb_',
+    cachePrefix: 'dragonfilm_tmdb_v2_',
     cacheTtlMs: 6 * 60 * 60 * 1000,
   },
 
@@ -403,6 +403,8 @@ const API = {
       vote_count: Number(raw.vote_count || 0),
       popularity: Number(raw.popularity || 0),
       media_type: raw.media_type || 'movie',
+      original_language: raw.original_language || '',
+      origin_country: raw.origin_country || (raw.production_countries || []).map(country => country.iso_3166_1).filter(Boolean),
       _source: 'tmdb',
     };
   },
@@ -451,6 +453,45 @@ const API = {
 
   _isVietnameseMovie(movie) {
     return /viet[-\s]?nam|việt\s*nam|vietnam/i.test(this._taxonomyText(movie));
+  },
+
+  _countrySignals(movie) {
+    const text = this._taxonomyText(movie).toLowerCase();
+    const checks = [
+      { re: /han[-\s]?quoc|hàn\s*quốc|korea|south\s*korea/, countries: ['KR'], languages: ['ko'] },
+      { re: /trung[-\s]?quoc|trung\s*quốc|china|hong[-\s]?kong|dai[-\s]?loan|đài\s*loan|taiwan/, countries: ['CN', 'HK', 'TW'], languages: ['zh', 'cn'] },
+      { re: /nhat[-\s]?ban|nhật\s*bản|japan/, countries: ['JP'], languages: ['ja'] },
+      { re: /viet[-\s]?nam|việt\s*nam|vietnam/, countries: ['VN'], languages: ['vi'] },
+      { re: /thai[-\s]?lan|thái\s*lan|thailand/, countries: ['TH'], languages: ['th'] },
+      { re: /au[-\s]?my|âu\s*mỹ|my|mỹ|usa|united\s*states|america/, countries: ['US'], languages: ['en'] },
+      { re: /anh|united\s*kingdom|uk|britain/, countries: ['GB'], languages: ['en'] },
+      { re: /an[-\s]?do|ấn\s*độ|india/, countries: ['IN'], languages: ['hi', 'ta', 'te', 'ml', 'kn'] },
+    ];
+    return checks.reduce((acc, item) => {
+      if (!item.re.test(text)) return acc;
+      acc.countries.push(...item.countries);
+      acc.languages.push(...item.languages);
+      return acc;
+    }, { countries: [], languages: [] });
+  },
+
+  _hasTranslatedLocalTitle(movie) {
+    const name = this._titleKey(movie?.name);
+    const origin = this._titleKey(movie?.origin_name);
+    return Boolean(name && origin && name !== origin);
+  },
+
+  _tmdbCountryCodes(info) {
+    return [
+      ...(Array.isArray(info?.origin_country) ? info.origin_country : []),
+      ...(Array.isArray(info?.production_countries) ? info.production_countries.map(country => country.iso_3166_1 || country) : []),
+    ].map(value => String(value || '').toUpperCase()).filter(Boolean);
+  },
+
+  _externalInfoHasContext(movie) {
+    const year = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    const signals = this._countrySignals(movie);
+    return Boolean(year || signals.countries.length || signals.languages.length);
   },
 
   _externalTitleCandidates(movie) {
@@ -502,6 +543,33 @@ const API = {
     const found = Number(String(resultYear || '').match(/\d{4}/)?.[0] || 0);
     if (!expected || !found) return true;
     return Math.abs(expected - found) <= 1;
+  },
+
+  _isTrustedTmdbInfo(movie, info) {
+    if (!info) return false;
+    if (movie?._source === 'tmdb' && movie.id) return true;
+
+    const year = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    const infoYear = String(info?.year || info?.release_date || '').match(/\d{4}/)?.[0] || '';
+    if (year && infoYear && !this._isAcceptableExternalYearMatch(year, infoYear)) return false;
+
+    const signals = this._countrySignals(movie);
+    const expectedCountries = new Set(signals.countries.map(code => code.toUpperCase()));
+    const expectedLanguages = new Set(signals.languages.map(code => code.toLowerCase()));
+    if (expectedCountries.size || expectedLanguages.size) {
+      const infoCountries = this._tmdbCountryCodes(info);
+      const infoLanguage = String(info?.original_language || '').toLowerCase();
+      const countryMatch = infoCountries.some(code => expectedCountries.has(code));
+      const languageMatch = infoLanguage && expectedLanguages.has(infoLanguage);
+      if (infoCountries.length || infoLanguage) return Boolean(countryMatch || languageMatch);
+    }
+
+    const hasContext = this._externalInfoHasContext(movie);
+    if (!hasContext && this._hasTranslatedLocalTitle(movie)) return false;
+
+    const titles = this._externalTitleCandidates(movie);
+    const bestScore = Math.max(0, ...titles.map(title => this._scoreTmdbResult(title, year, info)));
+    return bestScore >= (hasContext ? 52 : 92);
   },
 
   _stripHtml(value) {
@@ -925,7 +993,7 @@ const API = {
       ? `info:tmdb:${movie.id}`
       : `info:${this._movieKey(movie || {})}`;
     const cached = this._tmdbCacheGet(cacheKey);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return this._isTrustedTmdbInfo(movie, cached) ? cached : null;
 
     let detail = null;
     if (movie?._source === 'tmdb' && movie.id) {
@@ -942,7 +1010,9 @@ const API = {
           .map(item => ({ item, score: this._scoreTmdbResult(title, year, item) }))
           .filter(({ item, score }) => {
             const resultYear = String(item?.release_date || '').slice(0, 4);
-            return score >= 52 && this._isAcceptableExternalYearMatch(year, resultYear);
+            return score >= 52
+              && this._isAcceptableExternalYearMatch(year, resultYear)
+              && this._isTrustedTmdbInfo(movie, item);
           })
           .sort((a, b) => b.score - a.score)[0]?.item;
         if (best?.id) {
@@ -953,6 +1023,10 @@ const API = {
     }
 
     const normalized = this._normalizeTmdbDetails(detail);
+    if (normalized && !this._isTrustedTmdbInfo(movie, normalized)) {
+      this._tmdbCacheSet(cacheKey, null);
+      return null;
+    }
     this._tmdbCacheSet(cacheKey, normalized);
     return normalized;
   },
@@ -1046,10 +1120,32 @@ const API = {
     };
   },
 
+  _isTrustedOmdbInfo(movie, info) {
+    if (!info) return false;
+    const year = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
+    if (year && info?.year && !this._isAcceptableExternalYearMatch(year, info.year)) return false;
+    if (!this._externalInfoHasContext(movie) && this._hasTranslatedLocalTitle(movie)) return false;
+    const titles = this._externalTitleCandidates(movie);
+    const targetTitles = [info.title, String(info.imdbID || '').replace(/-/g, ' ')]
+      .map(value => this._titleKey(value))
+      .filter(Boolean);
+    const bestScore = Math.max(0, ...titles.flatMap(title => {
+      const key = this._titleKey(title);
+      return targetTitles.map(target => {
+        if (key === target) return 100;
+        if (key.includes(target) || target.includes(key)) return 82;
+        const words = key.split(/\s+/).filter(word => word.length > 2);
+        const overlap = words.filter(word => target.includes(word)).length;
+        return overlap * 14;
+      });
+    }));
+    return bestScore >= (this._externalInfoHasContext(movie) ? 52 : 92);
+  },
+
   async getOmdbInfo(movie) {
     const cacheKey = this._movieKey(movie || {});
     const cached = this._omdbCacheGet(cacheKey);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return this._isTrustedOmdbInfo(movie, cached) ? cached : null;
 
     const year = String(movie?.year || '').match(/\d{4}/)?.[0] || '';
     const titles = this._omdbTitleCandidates(movie);
@@ -1069,7 +1165,7 @@ const API = {
     }
 
     const normalized = this._normalizeOmdb(found);
-    if (normalized && !this._isAcceptableExternalYearMatch(year, normalized.year)) {
+    if (normalized && !this._isTrustedOmdbInfo(movie, normalized)) {
       this._omdbCacheSet(cacheKey, null);
       return null;
     }

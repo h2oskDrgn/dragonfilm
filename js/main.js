@@ -711,9 +711,95 @@ function initSearch() {
   const input = document.getElementById('search-input');
   const searchHeader = document.getElementById('search-header');
   let debounce;
+  let popupDebounce;
+  let popupRequestId = 0;
+  const popupCache = new Map();
+
+  const popupForInput = (el) => document.querySelector(`.search-popup[data-search-popup="${el?.id || ''}"]`);
+
+  const hideSearchPopups = () => {
+    document.querySelectorAll('.search-popup').forEach(popup => {
+      popup.hidden = true;
+      popup.innerHTML = '';
+    });
+  };
+
+  const popupState = (popup, message) => {
+    if (!popup) return;
+    popup.hidden = false;
+    popup.innerHTML = `<div class="search-popup-state">${escHtml(message)}</div>`;
+  };
+
+  const renderSearchPopup = (popup, items, query) => {
+    if (!popup) return;
+    const q = String(query || '').trim();
+    if (!items.length) {
+      popupState(popup, `Không thấy kết quả cho "${q}".`);
+      return;
+    }
+    popup.hidden = false;
+    popup.innerHTML = `<div class="search-popup-list">
+      ${items.slice(0, 6).map(movie => {
+        const poster = movie.poster_url || movie.thumb_url || '';
+        const href = buildMovieHref(movie, HOME_SEARCH_SERVERS);
+        const source = (movie._sources || [movie._server])
+          .filter(Boolean)
+          .map(server => API.servers[server]?.short || API.servers[server]?.name || server)
+          .slice(0, 2)
+          .join(' · ');
+        const meta = [
+          movie.year,
+          movie.quality,
+          movie.lang,
+          localCategoryLabel(movie),
+        ].filter(Boolean).join(' · ');
+        const posterHtml = poster
+          ? `<img class="search-popup-poster" src="${escHtml(poster)}" alt="${escHtml(movie.name)}" loading="lazy" onerror="this.outerHTML='<span class=&quot;search-popup-poster search-popup-placeholder&quot;>DF</span>'">`
+          : '<span class="search-popup-poster search-popup-placeholder">DF</span>';
+        return `<a class="search-popup-item" href="${escHtml(href)}">
+          ${posterHtml}
+          <span class="search-popup-main">
+            <strong class="search-popup-title">${escHtml(movie.name || 'Không tên')}</strong>
+            <span class="search-popup-meta">${escHtml(meta || movie.origin_name || 'DragonFilm')}</span>
+          </span>
+          ${source ? `<span class="search-popup-source">${escHtml(source)}</span>` : ''}
+        </a>`;
+      }).join('')}
+    </div>
+    <button class="search-popup-more" type="button" data-popup-search="${escHtml(q)}">Xem tất cả kết quả</button>`;
+  };
+
+  const showSearchPopup = async (el, query) => {
+    const q = String(query || '').trim();
+    const popup = popupForInput(el);
+    if (!popup) return;
+    if (q.length < 2) {
+      popup.hidden = true;
+      popup.innerHTML = '';
+      return;
+    }
+
+    const requestId = ++popupRequestId;
+    popupState(popup, 'Đang tìm...');
+    try {
+      const cacheKey = q.toLowerCase();
+      let result = popupCache.get(cacheKey);
+      if (!result) {
+        result = await API.searchAll(q, 1, HOME_SEARCH_SERVERS);
+        popupCache.set(cacheKey, result);
+      }
+      if (requestId !== popupRequestId || document.activeElement !== el) return;
+      renderSearchPopup(popup, result?.items || [], q);
+    } catch (err) {
+      if (requestId === popupRequestId) popupState(popup, 'Không tải được gợi ý, thử nhấn Enter.');
+    }
+  };
 
   const doSearch = (q) => {
     q = q.trim();
+    if (input && input.value !== q) input.value = q;
+    if (searchHeader && searchHeader.value !== q) searchHeader.value = q;
+    hideSearchPopups();
     if (!q) {
       state.mode = 'latest'; state.query = '';
       $$('.chip').forEach(c => c.classList.remove('active'));
@@ -723,19 +809,65 @@ function initSearch() {
     loadMovies();
   };
 
-  [input, searchHeader].forEach(el => {
-    el?.addEventListener('input', e => {
+  searchHeader?.addEventListener('input', e => {
+    clearTimeout(popupDebounce);
+    popupDebounce = setTimeout(() => showSearchPopup(searchHeader, e.target.value), 250);
+  });
+  searchHeader?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') hideSearchPopups();
+    if (e.key === 'ArrowDown') {
+      const first = popupForInput(searchHeader)?.querySelector('.search-popup-item');
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(popupDebounce);
+      showSearchPopup(searchHeader, e.target.value);
+    }
+  });
+  searchHeader?.addEventListener('focus', e => {
+    const q = e.target.value;
+    if (q.trim().length >= 2) {
+      clearTimeout(popupDebounce);
+      popupDebounce = setTimeout(() => showSearchPopup(searchHeader, q), 120);
+    }
+  });
+
+  input?.addEventListener('input', e => {
+    clearTimeout(debounce);
+    hideSearchPopups();
+    debounce = setTimeout(() => doSearch(e.target.value), 500);
+  });
+  input?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') hideSearchPopups();
+    if (e.key === 'Enter') {
       clearTimeout(debounce);
-      debounce = setTimeout(() => doSearch(e.target.value), 500);
-    });
-    el?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { clearTimeout(debounce); doSearch(e.target.value); }
-    });
+      doSearch(e.target.value);
+    }
   });
 
   document.querySelector('.header-search button')?.addEventListener('click', () => {
-    const q = searchHeader?.value || input?.value || '';
-    clearTimeout(debounce); doSearch(q);
+    const q = searchHeader?.value || '';
+    clearTimeout(popupDebounce);
+    showSearchPopup(searchHeader, q);
+  });
+
+  document.addEventListener('click', (e) => {
+    const more = e.target.closest('[data-popup-search]');
+    if (more) {
+      e.preventDefault();
+      const q = more.dataset.popupSearch || '';
+      if (searchHeader) searchHeader.value = q;
+      if (input) input.value = q;
+      clearTimeout(debounce);
+      clearTimeout(popupDebounce);
+      doSearch(q);
+      return;
+    }
+    if (!e.target.closest('.header-search')) hideSearchPopups();
   });
 }
 
